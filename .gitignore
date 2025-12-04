@@ -1,0 +1,18 @@
+# Build and editor artifacts
+build/
+cmake-build-*/
+.vscode/
+.idea/
+.DS_Store
+*.swp
+.logs/
+logs/
+*.o
+*.a
+*.so
+*.out
+*.log
+coverage/
+
+# Docker
+*.tar
