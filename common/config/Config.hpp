@@ -24,38 +24,46 @@ struct LocatorConfig {
     std::string dds_topic;
 };
 
+struct MessagingConfig {
+    std::string backend{"fastdds"};
+    int domain_id{0};
+    std::string mqtt_host{"127.0.0.1"};
+    int mqtt_port{1883};
+    std::string zenoh_endpoint{"tcp/127.0.0.1:7447"};
+};
+
 struct LdmCoreConfig {
     double aom_radius_m{1000.0};
     int static_map_validity_seconds{3600};
+    std::string ingest_topic{"ldm/updates"};
+    std::string query_topic{"ldm/query"};
+    std::string response_topic{"ldm/response"};
 };
 
 struct IngestionConfig {
-    int domain_id{0};
     int station_type{15};
     int station_id{0};
     bool performance_logs{false};
-    std::string dds_input_topic_mapem{"vanetza/in/mapem"};
-    std::string dds_output_topic_ldm{"ldm/in/mapem"};
-    bool local_mqtt_enable_publisher{false};
+    std::string input_topic{"generation/mapem"};
+    std::string output_topic{"ldm/updates"};
+    bool simulate_input{true};
+    int simulation_interval_ms{2000};
 };
 
 struct QueryConfig {
-    int domain_id{0};
     int station_type{15};
     int station_id{0};
     bool performance_logs{false};
-    std::string dds_query_topic{"ldm/query"};
-    std::string dds_response_topic{"ldm/response"};
-    bool local_mqtt_enable{true};
-    std::string local_mqtt_host{"127.0.0.1"};
-    int local_mqtt_port{1883};
-    std::string local_mqtt_query_topic{"ldm/query"};
-    std::string local_mqtt_response_topic{"ldm/response"};
+    std::string request_topic{"ldm/query"};
+    std::string response_topic{"ldm/response"};
+    bool auto_request{true};
+    int request_interval_ms{4000};
 };
 
 struct ConfigBundle {
     GeneralConfig general;
     LocatorConfig locator;
+    MessagingConfig messaging;
     LdmCoreConfig ldm_core;
     IngestionConfig ingestion;
     QueryConfig query;

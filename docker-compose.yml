@@ -1,41 +1,43 @@
-version: '3.8'
 services:
-  ldm-core:
-    build:
-      context: .
-      dockerfile: ldm-core/Dockerfile
-    container_name: ldm-core
-    network_mode: host
-    ipc: host
-    restart: unless-stopped
-    volumes:
-      - ./ldm-core/config.ini:/config.ini:ro
-      - ./logs:/logs
-
-  ldm-ingestion:
+  ingestion:
+    image: code.nap.av.it.pt:5050/mobility-networks/ldm/ingestion:latest
     build:
       context: .
       dockerfile: ldm-ingestion/Dockerfile
     container_name: ldm-ingestion
+    restart: always
     network_mode: host
     ipc: host
-    restart: unless-stopped
-    depends_on:
-      - ldm-core
     volumes:
       - ./ldm-ingestion/config.ini:/config.ini:ro
       - ./logs:/logs
 
-  ldm-query:
+  core:
+    image: code.nap.av.it.pt:5050/mobility-networks/ldm/core:latest
+    build:
+      context: .
+      dockerfile: ldm-core/Dockerfile
+    container_name: ldm-core
+    restart: always
+    depends_on:
+      - ingestion
+    network_mode: host
+    ipc: host
+    volumes:
+      - ./ldm-core/config.ini:/config.ini:ro
+      - ./logs:/logs
+
+  query:
+    image: code.nap.av.it.pt:5050/mobility-networks/ldm/query:latest
     build:
       context: .
       dockerfile: ldm-query/Dockerfile
     container_name: ldm-query
+    restart: always
+    depends_on:
+      - core
     network_mode: host
     ipc: host
-    restart: unless-stopped
-    depends_on:
-      - ldm-core
     volumes:
       - ./ldm-query/config.ini:/config.ini:ro
       - ./logs:/logs

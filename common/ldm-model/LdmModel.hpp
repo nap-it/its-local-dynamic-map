@@ -7,9 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace rapidjson {
-class Document;
-}
+#include <rapidjson/document.h>
 
 namespace ldm::model {
 
