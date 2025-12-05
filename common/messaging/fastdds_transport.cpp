@@ -2,7 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
-#include "../config/Config.hpp"
+#include "../config/config.hpp"
 
 namespace ldm::messaging {
 

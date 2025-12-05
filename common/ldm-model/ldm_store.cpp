@@ -1,4 +1,4 @@
-#include "LdmStore.hpp"
+#include "ldm_store.hpp"
 
 #include <cmath>
 #include <limits>

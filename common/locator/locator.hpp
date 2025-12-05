@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../config/Config.hpp"
+#include "../config/config.hpp"
 
 #include <mutex>
 #include <utility>

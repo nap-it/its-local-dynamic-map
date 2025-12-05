@@ -3,7 +3,7 @@
 #include "in_memory_bus.hpp"
 #include "transport.hpp"
 
-#include "../config/Config.hpp"
+#include "../config/config.hpp"
 
 namespace ldm::messaging {
 

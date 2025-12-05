@@ -1,6 +1,6 @@
 #pragma once
 
-#include "LdmModel.hpp"
+#include "ldm_model.hpp"
 
 #include <functional>
 #include <mutex>

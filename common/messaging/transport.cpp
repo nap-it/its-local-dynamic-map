@@ -7,7 +7,7 @@
 #include "mqtt_transport.hpp"
 #include "zenoh_transport.hpp"
 
-#include "../config/Config.hpp"
+#include "../config/config.hpp"
 
 namespace ldm::messaging {
 

@@ -1,15 +1,15 @@
 add_library(ldm_common
-    config/Config.cpp
-    geometry/GeometryUtils.cpp
-    locator/Locator.cpp
+    config/config.cpp
+    geometry/geometry_utils.cpp
+    locator/locator.cpp
     messaging/fastdds_transport.cpp
     messaging/in_memory_bus.cpp
     messaging/mqtt_transport.cpp
     messaging/transport.cpp
     messaging/zenoh_transport.cpp
-    metrics/Metrics.cpp
-    ldm-model/LdmModel.cpp
-    ldm-model/LdmStore.cpp
+    metrics/metrics.cpp
+    ldm-model/ldm_model.cpp
+    ldm-model/ldm_store.cpp
 )
 
 target_include_directories(ldm_common

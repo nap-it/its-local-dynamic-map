@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../ldm-model/LdmModel.hpp"
+#include "../ldm-model/ldm_model.hpp"
 
 namespace ldm::geometry {
 

@@ -5,11 +5,11 @@
 
 #include <spdlog/spdlog.h>
 
-#include "../../common/config/Config.hpp"
-#include "../../common/locator/Locator.hpp"
+#include "../../common/config/config.hpp"
+#include "../../common/locator/locator.hpp"
 #include "../../common/messaging/transport.hpp"
-#include "../../common/metrics/Metrics.hpp"
-#include "../../common/ldm-model/LdmStore.hpp"
+#include "../../common/metrics/metrics.hpp"
+#include "../../common/ldm-model/ldm_store.hpp"
 
 int main() {
     using namespace std::chrono_literals;
