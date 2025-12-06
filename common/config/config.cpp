@@ -70,6 +70,8 @@ ConfigBundle loadConfig(const std::string& path) {
             if (key == "domain_id") cfg.messaging.domain_id = value.empty() ? 0 : std::stoi(value);
             if (key == "mqtt_host") cfg.messaging.mqtt_host = value;
             if (key == "mqtt_port") cfg.messaging.mqtt_port = value.empty() ? 1883 : std::stoi(value);
+            if (key == "mqtt_username") cfg.messaging.mqtt_username = value;
+            if (key == "mqtt_password") cfg.messaging.mqtt_password = value;
             if (key == "zenoh_endpoint") cfg.messaging.zenoh_endpoint = value;
         } else if (section == "ldm-core") {
             if (key == "aom_radius_m") cfg.ldm_core.aom_radius_m = std::stod(value);

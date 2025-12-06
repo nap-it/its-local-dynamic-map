@@ -7,6 +7,13 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(BUILD_TESTING "Enable tests" ON)
 
+# Set include directories globally before processing subdirectories
+include_directories(${CMAKE_SOURCE_DIR}/common/spdlog/include)
+include_directories(${CMAKE_SOURCE_DIR}/common/rapidjson/include)
+include_directories(${CMAKE_SOURCE_DIR})
+include_directories(${CMAKE_SOURCE_DIR}/paho-mqtt-cpp-wrapper/include)
+include_directories(${CMAKE_SOURCE_DIR}/common)
+
 add_subdirectory(common)
 add_subdirectory(ldm-core)
 add_subdirectory(ldm-ingestion)

@@ -29,6 +29,8 @@ struct MessagingConfig {
     int domain_id{0};
     std::string mqtt_host{"127.0.0.1"};
     int mqtt_port{1883};
+    std::string mqtt_username;
+    std::string mqtt_password;
     std::string zenoh_endpoint{"tcp/127.0.0.1:7447"};
 };
 
