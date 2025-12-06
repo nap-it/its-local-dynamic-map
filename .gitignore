@@ -1,20 +1,29 @@
-# Build and editor artifacts
-build/
+# Global (align with cps-v2)
+**/build
+**/fastdds-cpp-wrapper
+**/rapidjson
+**/spdlog
+**/.vscode
+**/paho-mqtt-cpp-wrapper
+**/logs
+**/build_docker_images.log
+**/hosts_test.yml
+**/hosts_rpis.yml
+**/deploy_test.yml
+**/.DS_Store
+
+# Local tooling/build extras
 cmake-build-*/
-.vscode/
 .idea/
-.DS_Store
 *.swp
 .logs/
-logs/
 *.o
 *.a
 *.so
 *.out
 *.log
 coverage/
-
-# Docker
 *.tar
 
+# Reference tree kept out of VCS
 cps-v2/
