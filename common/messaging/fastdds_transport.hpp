@@ -1,8 +1,15 @@
 #pragma once
 
-#include "in_memory_bus.hpp"
-#include "transport.hpp"
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
+#include "fastdds-cpp-wrapper/dds.hpp"
+
+#include "transport.hpp"
 #include "../config/config.hpp"
 
 namespace ldm::messaging {
@@ -17,8 +24,15 @@ public:
     std::string backend() const override { return "FastDDS"; }
 
 private:
+    void dispatch(const std::string& topic, const std::string& payload);
+
     config::MessagingConfig cfg_;
-    InMemoryBus& bus_;
+    std::unique_ptr<Dds> dds_;
+    std::mutex mutex_;
+    int next_id_{1};
+    std::unordered_map<std::string, std::vector<std::pair<int, MessageHandler>>> handlers_;
+    std::unordered_map<int, std::string> id_to_topic_;
+    std::unordered_set<std::string> provisioned_publishers_;
 };
 
 }  // namespace ldm::messaging
