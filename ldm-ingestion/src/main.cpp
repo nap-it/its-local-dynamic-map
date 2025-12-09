@@ -17,6 +17,7 @@ int main() {
     spdlog::info("[LDM-Ingestion] Starting MAPEM ingestion service");
 
     ldm::locator::Locator locator(cfg.locator);
+    locator.run();
     std::unique_ptr<ldm::metrics::Metrics> metrics;
     ldm::metrics::Counter* received_counter = nullptr;
     ldm::metrics::Counter* forwarded_counter = nullptr;

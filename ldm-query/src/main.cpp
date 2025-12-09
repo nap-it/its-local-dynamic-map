@@ -18,6 +18,7 @@ int main() {
     spdlog::info("[LDM-Query] Starting query service");
 
     ldm::locator::Locator locator(cfg.locator);
+    locator.run();
     auto [lat, lon] = locator.currentPosition();
     ldm::model::LdmStore store(cfg.ldm_core.aom_radius_m);
     store.setStationReference(lat, lon);

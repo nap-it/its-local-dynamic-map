@@ -19,6 +19,7 @@ int main() {
     spdlog::info("[LDM-Core] Starting LDM core service");
 
     ldm::locator::Locator locator(cfg.locator);
+    locator.run();
     auto [lat, lon] = locator.currentPosition();
 
     ldm::model::LdmStore store(cfg.ldm_core.aom_radius_m);
