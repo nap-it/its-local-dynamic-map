@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <sstream>
 #include <thread>
 
@@ -9,6 +10,20 @@
 #include "../../common/locator/locator.hpp"
 #include "../../common/messaging/transport.hpp"
 #include "../../common/metrics/metrics.hpp"
+
+namespace {
+
+std::string readFile(const std::string& path) {
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return {};
+    }
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    return buffer.str();
+}
+
+}  // namespace
 
 int main() {
     using namespace std::chrono_literals;
@@ -32,6 +47,16 @@ int main() {
     const auto input_topic = cfg.ingestion.input_topic.empty() ? std::string("generation/mapem") : cfg.ingestion.input_topic;
     const auto output_topic = cfg.ingestion.output_topic.empty() ? std::string("ldm/updates") : cfg.ingestion.output_topic;
 
+    std::string simulated_mapem;
+    if (cfg.ingestion.simulate_input && !cfg.ingestion.mapem_file.empty()) {
+        simulated_mapem = readFile(cfg.ingestion.mapem_file);
+        if (simulated_mapem.empty()) {
+            spdlog::warn("[LDM-Ingestion] Could not read MAPEM file '{}'; using synthetic payloads", cfg.ingestion.mapem_file);
+        } else {
+            spdlog::info("[LDM-Ingestion] Loaded MAPEM file '{}'", cfg.ingestion.mapem_file);
+        }
+    }
+
     transport->subscribe(input_topic, [&, transport_ptr, output_topic](const std::string& topic, const std::string& payload) {
         if (received_counter) {
             received_counter->Increment();
@@ -49,11 +74,28 @@ int main() {
     int sequence = 0;
     while (true) {
         if (cfg.ingestion.simulate_input) {
-            std::ostringstream sample;
-            sample << "mapem_seq=" << sequence << ";station=" << cfg.ingestion.station_id
-                   << ";objects=" << ((sequence % 4) + 1);
-            spdlog::debug("[LDM-Ingestion] Simulating MAPEM seq={} topic={}", sequence, input_topic);
-            transport->publish(input_topic, sample.str());
+            std::string payload;
+            if (!simulated_mapem.empty()) {
+                payload = simulated_mapem;
+                spdlog::debug("[LDM-Ingestion] Simulating MAPEM from file '{}' seq={} topic={}",
+                              cfg.ingestion.mapem_file, sequence, input_topic);
+            } else {
+                std::ostringstream sample;
+                sample << "mapem_seq=" << sequence << ";station=" << cfg.ingestion.station_id
+                       << ";objects=" << ((sequence % 4) + 1);
+                payload = sample.str();
+                spdlog::debug("[LDM-Ingestion] Simulating MAPEM seq={} topic={}", sequence, input_topic);
+            }
+            
+            // In simulation mode, publish directly to the output topic
+            // since DDS doesn't deliver messages back to the same participant
+            std::ostringstream enriched;
+            enriched << "ldm.update=" << payload << ";station=" << cfg.ingestion.station_id;
+            transport->publish(output_topic, enriched.str());
+            spdlog::debug("[LDM-Ingestion] Published simulated update to {}", output_topic);
+            if (forwarded_counter) {
+                forwarded_counter->Increment();
+            }
             ++sequence;
         }
         std::this_thread::sleep_for(interval);

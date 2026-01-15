@@ -87,6 +87,7 @@ ConfigBundle loadConfig(const std::string& path) {
             if (key == "output_topic") cfg.ingestion.output_topic = value;
             if (key == "simulate_input") cfg.ingestion.simulate_input = (value == "true" || value == "1" || value == "yes");
             if (key == "simulation_interval_ms") cfg.ingestion.simulation_interval_ms = value.empty() ? 2000 : std::stoi(value);
+            if (key == "mapem_file") cfg.ingestion.mapem_file = value;
         } else if (section == "query") {
             if (key == "station_type") cfg.query.station_type = std::stoi(value);
             if (key == "station_id") cfg.query.station_id = std::stoi(value);

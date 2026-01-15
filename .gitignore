@@ -27,3 +27,6 @@ coverage/
 
 # Reference tree kept out of VCS
 cps-v2/
+
+# Remove Python venv references
+**/.venv/

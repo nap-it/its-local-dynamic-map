@@ -50,6 +50,7 @@ struct IngestionConfig {
     std::string output_topic{"ldm/updates"};
     bool simulate_input{true};
     int simulation_interval_ms{2000};
+    std::string mapem_file;
 };
 
 struct QueryConfig {
