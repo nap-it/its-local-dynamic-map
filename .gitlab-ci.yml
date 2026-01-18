@@ -70,8 +70,6 @@ before_script:
         - $DOCKERFILE_PATH/**
     # 2) Non-main branch pipelines
     - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
-      changes:
-        - $DOCKERFILE_PATH/**
 
 # ------------------------------------------------------------------------------
 # 2) BUILD JOBS (one per component × arch)
@@ -163,8 +161,6 @@ build_query_arm64:
         - $DOCKERFILE_PATH/**
     # Non-main branch pipelines
     - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
-      changes:
-        - $DOCKERFILE_PATH/**
 
 # ------------------------------------------------------------------------------
 # 4) MANIFEST JOBS (one per component)
