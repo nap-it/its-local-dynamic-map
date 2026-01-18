@@ -10,6 +10,7 @@ services:
     ipc: host
     volumes:
       - ./ingestion/config.ini:/config.ini:ro
+      - ./maps:/maps:ro
       - ./logs:/logs
 
   core:
