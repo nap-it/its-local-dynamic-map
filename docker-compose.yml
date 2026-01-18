@@ -3,7 +3,7 @@ services:
     image: code.nap.av.it.pt:5050/mobility-networks/ldm/ingestion:latest
     build:
       context: .
-      dockerfile: ldm-ingestion/Dockerfile
+      dockerfile: ingestion/Dockerfile
     container_name: ldm-ingestion
     restart: always
     network_mode: host
@@ -16,7 +16,7 @@ services:
     image: code.nap.av.it.pt:5050/mobility-networks/ldm/core:latest
     build:
       context: .
-      dockerfile: ldm-core/Dockerfile
+      dockerfile: core/Dockerfile
     container_name: ldm-core
     restart: always
     depends_on:
@@ -31,7 +31,7 @@ services:
     image: code.nap.av.it.pt:5050/mobility-networks/ldm/query:latest
     build:
       context: .
-      dockerfile: ldm-query/Dockerfile
+      dockerfile: query/Dockerfile
     container_name: ldm-query
     restart: always
     depends_on:
