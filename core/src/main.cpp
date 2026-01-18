@@ -5,6 +5,8 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <spdlog/spdlog.h>
 #include <rapidjson/document.h>
@@ -82,6 +84,7 @@ std::string extractMapemJson(const std::string& payload) {
 struct MapemFilter {
     bool include_vehicle_lane = true;
     bool include_sidewalk = true;
+    bool include_waiting_sidewalk = false;
     bool include_crosswalk = true;
     bool include_bike_lane = true;
     bool include_parking = true;
@@ -112,6 +115,7 @@ MapemFilter parseMapemFilter(const rj::Value& root) {
     applyBool(source, "vehicleLane", filter.include_vehicle_lane);
     applyBool(source, "vehicle", filter.include_vehicle_lane);
     applyBool(source, "sidewalk", filter.include_sidewalk);
+    applyBool(source, "waitingSidewalk", filter.include_waiting_sidewalk);
     applyBool(source, "crosswalk", filter.include_crosswalk);
     applyBool(source, "bikeLane", filter.include_bike_lane);
     applyBool(source, "parking", filter.include_parking);
@@ -132,6 +136,7 @@ MapemFilter parseMapemFilter(const rj::Value& root) {
 bool isFullMapemRequest(const MapemFilter& filter) {
     return filter.include_vehicle_lane &&
            filter.include_sidewalk &&
+           filter.include_waiting_sidewalk &&
            filter.include_crosswalk &&
            filter.include_bike_lane &&
            filter.include_parking &&
@@ -174,6 +179,7 @@ std::string laneTypeFromLane(const rj::Value& lane) {
 bool allowLaneType(const std::string& lane_type, const MapemFilter& filter) {
     if (lane_type == "vehicle") return filter.include_vehicle_lane;
     if (lane_type == "sidewalk") return filter.include_sidewalk;
+    if (lane_type == "waitingSidewalk") return filter.include_waiting_sidewalk;
     if (lane_type == "crosswalk") return filter.include_crosswalk;
     if (lane_type == "bikeLane") return filter.include_bike_lane;
     if (lane_type == "parking") return filter.include_parking;
@@ -245,11 +251,67 @@ bool buildFilteredMapem(const std::string& mapem_json, const MapemFilter& filter
 
             rj::Value out_lane_set(rj::kArrayType);
             if (inter.HasMember("laneSet") && inter["laneSet"].IsArray()) {
-                for (const auto& lane : inter["laneSet"].GetArray()) {
+                const auto& lane_set = inter["laneSet"];
+                std::unordered_map<int, std::string> lane_types;
+                std::unordered_set<int> waiting_sidewalks;
+
+                for (const auto& lane : lane_set.GetArray()) {
                     if (!lane.IsObject()) {
                         continue;
                     }
+                    if (!lane.HasMember("laneID") || !lane["laneID"].IsInt()) {
+                        continue;
+                    }
+                    lane_types[lane["laneID"].GetInt()] = laneTypeFromLane(lane);
+                }
+
+                for (const auto& lane : lane_set.GetArray()) {
+                    if (!lane.IsObject()) {
+                        continue;
+                    }
+                    if (!lane.HasMember("laneID") || !lane["laneID"].IsInt()) {
+                        continue;
+                    }
+                    int lane_id = lane["laneID"].GetInt();
+                    auto type_it = lane_types.find(lane_id);
+                    if (type_it == lane_types.end() || type_it->second != "sidewalk") {
+                        continue;
+                    }
+                    if (!lane.HasMember("connectsTo") || !lane["connectsTo"].IsArray()) {
+                        continue;
+                    }
+                    for (const auto& conn : lane["connectsTo"].GetArray()) {
+                        if (!conn.IsObject()) {
+                            continue;
+                        }
+                        if (!conn.HasMember("connectingLane") || !conn["connectingLane"].IsObject()) {
+                            continue;
+                        }
+                        const auto& connecting_lane = conn["connectingLane"];
+                        if (!connecting_lane.HasMember("lane") || !connecting_lane["lane"].IsInt()) {
+                            continue;
+                        }
+                        int target_lane = connecting_lane["lane"].GetInt();
+                        auto target_it = lane_types.find(target_lane);
+                        if (target_it != lane_types.end() && target_it->second == "crosswalk") {
+                            waiting_sidewalks.insert(lane_id);
+                            break;
+                        }
+                    }
+                }
+
+                for (const auto& lane : lane_set.GetArray()) {
+                    if (!lane.IsObject()) {
+                        continue;
+                    }
+                    int lane_id = 0;
+                    if (lane.HasMember("laneID") && lane["laneID"].IsInt()) {
+                        lane_id = lane["laneID"].GetInt();
+                    }
                     std::string lane_type = laneTypeFromLane(lane);
+                    if (waiting_sidewalks.count(lane_id)) {
+                        lane_type = "waitingSidewalk";
+                    }
                     if (!allowLaneType(lane_type, filter)) {
                         continue;
                     }
@@ -263,7 +325,11 @@ bool buildFilteredMapem(const std::string& mapem_json, const MapemFilter& filter
                     if (lane.HasMember("laneAttributes") && lane["laneAttributes"].IsObject()) {
                         const auto& attrs = lane["laneAttributes"];
                         rj::Value out_attrs(rj::kObjectType);
-                        if (attrs.HasMember("laneType")) {
+                        if (lane_type == "waitingSidewalk") {
+                            rj::Value lane_type_obj(rj::kObjectType);
+                            lane_type_obj.AddMember("waitingSidewalk", rj::Value(rj::kObjectType), alloc);
+                            out_attrs.AddMember("laneType", lane_type_obj, alloc);
+                        } else if (attrs.HasMember("laneType")) {
                             out_attrs.AddMember("laneType", rj::Value(attrs["laneType"], alloc), alloc);
                         }
                         if (filter.include_directional_use && attrs.HasMember("directionalUse")) {
