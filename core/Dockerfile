@@ -90,7 +90,7 @@ RUN ldconfig
 
 WORKDIR /ldm
 
-COPY --from=builder /workspace/build/core/ldm-core /ldm/core
+COPY --from=builder /workspace/build/core/core /ldm/core
 COPY --from=builder /workspace/zenoh_config.json5 /ldm/zenoh_config.json5
 
 ENTRYPOINT ["/ldm/core"]

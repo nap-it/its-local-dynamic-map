@@ -1,4 +1,3 @@
-# Global (align with cps-v2)
 **/build
 **/fastdds-cpp-wrapper
 **/rapidjson
@@ -11,8 +10,6 @@
 **/hosts_rpis.yml
 **/deploy_test.yml
 **/.DS_Store
-
-# Local tooling/build extras
 cmake-build-*/
 .idea/
 *.swp
@@ -24,9 +21,3 @@ cmake-build-*/
 *.log
 coverage/
 *.tar
-
-# Reference tree kept out of VCS
-cps-v2/
-
-# Remove Python venv references
-**/.venv/

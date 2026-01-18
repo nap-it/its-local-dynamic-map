@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   ldm-core:
     image: code.nap.av.it.pt:5050/external-tools/misc-docker-images/debian:bullseye-slim
