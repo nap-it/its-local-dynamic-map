@@ -90,7 +90,7 @@ RUN ldconfig
 
 WORKDIR /ldm
 
-COPY --from=builder /workspace/build/ldm-ingestion/ldm-ingestion /ldm/ingestion
+COPY --from=builder /workspace/build/ingestion/ldm-ingestion /ldm/ingestion
 COPY --from=builder /workspace/zenoh_config.json5 /ldm/zenoh_config.json5
 
 ENTRYPOINT ["/ldm/ingestion"]

@@ -90,7 +90,7 @@ RUN ldconfig
 
 WORKDIR /ldm
 
-COPY --from=builder /workspace/build/ldm-query/ldm-query /ldm/query
+COPY --from=builder /workspace/build/query/ldm-query /ldm/query
 COPY --from=builder /workspace/zenoh_config.json5 /ldm/zenoh_config.json5
 
 ENTRYPOINT ["/ldm/query"]
