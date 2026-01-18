@@ -55,7 +55,7 @@ RUN git -c http.sslVerify=false clone --depth 1 https://code.nap.av.it.pt/extern
     git -c http.sslVerify=false clone --depth 1 https://code.nap.av.it.pt/external-tools/rapidjson.git common/rapidjson && \
     git -c http.sslVerify=false clone --depth 1 https://code.nap.av.it.pt/mobility-networks/paho-mqtt-cpp-wrapper.git paho-mqtt-cpp-wrapper && \
     git -c http.sslVerify=false clone --depth 1 https://code.nap.av.it.pt/mobility-networks/fastdds-cpp-wrapper.git fastdds-cpp-wrapper
-RUN rm -rf build && cmake -S . -B build && cmake --build build --target ldm-query --parallel $(nproc)
+RUN rm -rf build && cmake -S . -B build && cmake --build build --target query --parallel $(nproc)
 
 
 # ==============================

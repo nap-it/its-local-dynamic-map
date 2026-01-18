@@ -9,7 +9,7 @@ services:
     network_mode: host
     ipc: host
     volumes:
-      - ./ldm-ingestion/config.ini:/config.ini:ro
+      - ./ingestion/config.ini:/config.ini:ro
       - ./logs:/logs
 
   core:
@@ -24,7 +24,7 @@ services:
     network_mode: host
     ipc: host
     volumes:
-      - ./ldm-core/config.ini:/config.ini:ro
+      - ./core/config.ini:/config.ini:ro
       - ./logs:/logs
 
   query:
@@ -39,5 +39,5 @@ services:
     network_mode: host
     ipc: host
     volumes:
-      - ./ldm-query/config.ini:/config.ini:ro
+      - ./query/config.ini:/config.ini:ro
       - ./logs:/logs
