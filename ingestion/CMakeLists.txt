@@ -1,7 +1,7 @@
-add_executable(ldm-ingestion
+add_executable(ingestion
     src/main.cpp
 )
 
-target_include_directories(ldm-ingestion PRIVATE ${CMAKE_SOURCE_DIR}/common)
+target_include_directories(ingestion PRIVATE ${CMAKE_SOURCE_DIR}/common)
 
-target_link_libraries(ldm-ingestion PRIVATE ldm_common)
+target_link_libraries(ingestion PRIVATE common)

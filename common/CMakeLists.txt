@@ -8,7 +8,7 @@ file(GLOB FASTDDS_SRC
 
 add_subdirectory(${CMAKE_SOURCE_DIR}/paho-mqtt-cpp-wrapper ${CMAKE_BINARY_DIR}/paho-mqtt-cpp-wrapper)
 
-add_library(ldm_common
+add_library(common
     config/config.cpp
     geometry/geometry_utils.cpp
     locator/locator.cpp
@@ -23,7 +23,7 @@ add_library(ldm_common
     ${FASTDDS_SRC}
 )
 
-target_include_directories(ldm_common
+target_include_directories(common
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
            ${CMAKE_CURRENT_SOURCE_DIR}/rapidjson/include
            ${CMAKE_CURRENT_SOURCE_DIR}/spdlog/include
@@ -35,7 +35,7 @@ find_package(Threads REQUIRED)
 find_package(zenohc REQUIRED)
 find_package(zenohcxx REQUIRED)
 
-target_link_libraries(ldm_common
+target_link_libraries(common
     PUBLIC Threads::Threads
            paho-mqtt-cpp-wrapper
            paho-mqttpp3
