@@ -362,7 +362,17 @@
               "egressPath": true
             },
             "laneType": {
-              "crosswalk": {}
+              "crosswalk": {
+                "crosswalkRevocableLane": false,
+                "bicyleUseAllowed": false,
+                "isXwalkFlyOverLane": false,
+                "fixedCycleTime": false,
+                "biDirectionalCycleTimes": false,
+                "hasPushToWalkButton": false,
+                "audioSupport": false,
+                "rfSignalRequestPresent": false,
+                "unsignalizedSegmentsPresent": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -446,7 +456,17 @@
               "egressPath": true
             },
             "laneType": {
-              "crosswalk": {}
+              "crosswalk": {
+                "crosswalkRevocableLane": false,
+                "bicyleUseAllowed": false,
+                "isXwalkFlyOverLane": false,
+                "fixedCycleTime": false,
+                "biDirectionalCycleTimes": false,
+                "hasPushToWalkButton": false,
+                "audioSupport": false,
+                "rfSignalRequestPresent": false,
+                "unsignalizedSegmentsPresent": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
