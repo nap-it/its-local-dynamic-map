@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <iomanip>
 #include <mutex>
 #include <sstream>
@@ -23,6 +24,17 @@
 namespace rj = rapidjson;
 
 namespace {
+
+std::atomic<bool> g_running{true};
+
+void handleSignal(int) {
+    g_running.store(false);
+}
+
+void installSignalHandlers() {
+    std::signal(SIGINT, handleSignal);
+    std::signal(SIGTERM, handleSignal);
+}
 
 struct GeneralConfig {
     bool debug{true};
@@ -459,6 +471,7 @@ bool buildFilteredMapem(const std::string& mapem_json, const MapemFilter& filter
 
 int main() {
     using namespace std::chrono_literals;
+    installSignalHandlers();
     auto cfg = readConfig("/config.ini");
 
     spdlog::set_level(cfg.general.debug ? spdlog::level::debug : spdlog::level::info);
@@ -471,15 +484,16 @@ int main() {
     ldm::model::LdmStore store(cfg.ldm_core.aom_radius_m);
     store.setStationReference(lat, lon);
 
+    std::thread locator_update_thread;
     if (locator.isDynamic() && cfg.locator.update_interval_ms > 0) {
         const auto update_interval = std::chrono::milliseconds(std::max(250, cfg.locator.update_interval_ms));
-        std::thread([&store, &locator, update_interval]() {
-            while (true) {
+        locator_update_thread = std::thread([&store, &locator, update_interval]() {
+            while (g_running.load()) {
                 auto [current_lat, current_lon] = locator.currentPosition();
                 store.setStationReference(current_lat, current_lon);
                 std::this_thread::sleep_for(update_interval);
             }
-        }).detach();
+        });
     }
 
     std::unique_ptr<ldm::metrics::Metrics> metrics;
@@ -567,9 +581,12 @@ int main() {
         transport_ptr->publish(response_topic, response.str());
     });
 
-    while (true) {
+    while (g_running.load()) {
         store.runMaintenance();
         std::this_thread::sleep_for(5s);
+    }
+    if (locator_update_thread.joinable()) {
+        locator_update_thread.join();
     }
     return 0;
 }

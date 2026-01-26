@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cctype>
 #include <fstream>
 #include <sstream>
@@ -57,7 +59,19 @@ struct CategoryState {
     std::string simulated_payload;
     ldm::metrics::Counter* received_counter{nullptr};
     std::unique_ptr<ldm::messaging::Transport> input_transport;
+    std::thread simulation_thread;
 };
+
+std::atomic<bool> g_running{true};
+
+void handleSignal(int) {
+    g_running.store(false);
+}
+
+void installSignalHandlers() {
+    std::signal(SIGINT, handleSignal);
+    std::signal(SIGTERM, handleSignal);
+}
 
 std::string readFile(const std::string& path) {
     std::ifstream in(path);
@@ -212,7 +226,8 @@ void runSimulation(const CategoryConfig& cfg,
                    const std::string& simulated_payload,
                    ldm::messaging::Transport* transport,
                    int station_id,
-                   ldm::metrics::Counter* forwarded_counter) {
+                   ldm::metrics::Counter* forwarded_counter,
+                   const std::atomic<bool>& running) {
     if (cfg.output_topics.empty()) {
         spdlog::warn("[LDM-Ingestion] {} simulation skipped, no output topics", cfg.label);
         return;
@@ -220,7 +235,7 @@ void runSimulation(const CategoryConfig& cfg,
 
     const auto interval = std::chrono::milliseconds(std::max(100, cfg.simulation_interval_ms));
     int sequence = 0;
-    while (true) {
+    while (running.load()) {
         std::string payload;
         if (!simulated_payload.empty()) {
             payload = simulated_payload;
@@ -262,9 +277,13 @@ void configureInput(CategoryState& category,
 
         const auto sim_config = category.config;
         const auto sim_payload = category.simulated_payload;
-        std::thread([sim_config, sim_payload, output_transport, station_id = cfg.ingestion.station_id, forwarded_counter]() {
-            runSimulation(sim_config, sim_payload, output_transport, station_id, forwarded_counter);
-        }).detach();
+        category.simulation_thread = std::thread([sim_config,
+                                                  sim_payload,
+                                                  output_transport,
+                                                  station_id = cfg.ingestion.station_id,
+                                                  forwarded_counter]() {
+            runSimulation(sim_config, sim_payload, output_transport, station_id, forwarded_counter, g_running);
+        });
         return;
     }
 
@@ -299,6 +318,7 @@ void configureInput(CategoryState& category,
 }  // namespace
 
 int main() {
+    installSignalHandlers();
     auto cfg = readConfig("/config.ini");
     spdlog::set_level(cfg.general.debug ? spdlog::level::debug : spdlog::level::info);
     spdlog::info("[LDM-Ingestion] Starting ingestion service");
@@ -328,8 +348,13 @@ int main() {
         configureInput(category, cfg, transport_ptr, forwarded_counter);
     }
 
-    while (true) {
+    while (g_running.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    for (auto& category : categories) {
+        if (category.simulation_thread.joinable()) {
+            category.simulation_thread.join();
+        }
     }
     return 0;
 }

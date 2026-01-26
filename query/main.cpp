@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <csignal>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -11,6 +13,17 @@
 #include "common/messaging/transport.hpp"
 
 namespace {
+
+std::atomic<bool> g_running{true};
+
+void handleSignal(int) {
+    g_running.store(false);
+}
+
+void installSignalHandlers() {
+    std::signal(SIGINT, handleSignal);
+    std::signal(SIGTERM, handleSignal);
+}
 
 struct GeneralConfig {
     bool debug{true};
@@ -80,6 +93,7 @@ QueryConfigBundle readConfig(const std::string& path) {
 }  // namespace
 
 int main() {
+    installSignalHandlers();
     auto cfg = readConfig("/config.ini");
     spdlog::set_level(cfg.general.debug ? spdlog::level::debug : spdlog::level::info);
     spdlog::info("[LDM-Query] Starting query service");
@@ -101,7 +115,7 @@ int main() {
 
     const auto interval = std::chrono::milliseconds(std::max(250, cfg.query.request_interval_ms));
     int sequence = 0;
-    while (true) {
+    while (g_running.load()) {
         if (cfg.query.auto_request) {
             std::ostringstream query_payload;
             query_payload << "request_id=" << sequence << ";lat=" << cfg.query.station_latitude
