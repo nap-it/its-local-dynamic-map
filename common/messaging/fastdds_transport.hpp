@@ -10,13 +10,12 @@
 #include "fastdds-cpp-wrapper/dds.hpp"
 
 #include "transport.hpp"
-#include "../config/config.hpp"
 
 namespace ldm::messaging {
 
 class FastDdsTransport : public Transport {
 public:
-    explicit FastDdsTransport(const config::MessagingConfig& cfg);
+    explicit FastDdsTransport(const MessagingConfig& cfg);
 
     void publish(const std::string& topic, const std::string& payload) override;
     int subscribe(const std::string& topic, MessageHandler handler) override;
@@ -26,7 +25,7 @@ public:
 private:
     void dispatch(const std::string& topic, const std::string& payload);
 
-    config::MessagingConfig cfg_;
+    MessagingConfig cfg_;
     std::unique_ptr<Dds> dds_;
     std::mutex mutex_;
     int next_id_{1};

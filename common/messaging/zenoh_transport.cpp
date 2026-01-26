@@ -6,7 +6,7 @@
 
 namespace ldm::messaging {
 
-ZenohTransport::ZenohTransport(const config::MessagingConfig& cfg) : cfg_(cfg) {
+ZenohTransport::ZenohTransport(const MessagingConfig& cfg) : cfg_(cfg) {
     zenoh::ZResult* err = nullptr;
     zenoh::Config zconfig = zenoh::Config::from_file("./zenoh_config.json5", err);
     if (!cfg_.zenoh_endpoint.empty()) {

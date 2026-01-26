@@ -1,6 +1,6 @@
 services:
   ingestion:
-    image: code.nap.av.it.pt:5050/mobility-networks/ldm/ingestion:latest
+    image: code.nap.av.it.pt:5050/mobility-networks/ldm/ingestion:dev
     build:
       context: .
       dockerfile: ingestion/Dockerfile
@@ -14,7 +14,7 @@ services:
       - ./logs:/logs
 
   core:
-    image: code.nap.av.it.pt:5050/mobility-networks/ldm/core:latest
+    image: code.nap.av.it.pt:5050/mobility-networks/ldm/core:dev
     build:
       context: .
       dockerfile: core/Dockerfile
@@ -29,7 +29,7 @@ services:
       - ./logs:/logs
 
   query:
-    image: code.nap.av.it.pt:5050/mobility-networks/ldm/query:latest
+    image: code.nap.av.it.pt:5050/mobility-networks/ldm/query:dev
     build:
       context: .
       dockerfile: query/Dockerfile

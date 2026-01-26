@@ -1,7 +1,5 @@
 #pragma once
 
-#include "../config/config.hpp"
-
 #include "fastdds-cpp-wrapper/dds.hpp"
 #include "mqttwrapper.h"
 #include "rapidjson/document.h"
@@ -17,9 +15,23 @@ namespace ldm::locator {
 
 enum class ProviderType { STATIC, MQTT, DDS };
 
+struct LocatorConfig {
+    int station_type{15};
+    int station_id{0};
+    double station_latitude{0.0};
+    double station_longitude{0.0};
+    std::string location_provider{"static"};
+    std::string mqtt_host;
+    int mqtt_port{0};
+    std::string mqtt_topic;
+    int domain_id{0};
+    std::string dds_topic;
+    int update_interval_ms{1000};
+};
+
 class Locator {
 public:
-    explicit Locator(const config::LocatorConfig& cfg);
+    explicit Locator(const LocatorConfig& cfg);
     ~Locator();
 
     void run();
@@ -27,6 +39,7 @@ public:
     float heading() const;
     int stationType() const;
     int stationId() const;
+    bool isDynamic() const;
     void updatePosition(double lat, double lon);
 
 private:
@@ -36,7 +49,7 @@ private:
     void parseAndUpdateLocation(const std::string& topic, const std::string& message);
     void stop();
 
-    config::LocatorConfig cfg_;
+    LocatorConfig cfg_;
     ProviderType provider_{ProviderType::STATIC};
     mutable std::mutex mutex_;
 

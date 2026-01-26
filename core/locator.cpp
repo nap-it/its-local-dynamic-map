@@ -31,7 +31,7 @@ ldm::locator::ProviderType parseProvider(const std::string& provider) {
 
 namespace ldm::locator {
 
-Locator::Locator(const config::LocatorConfig& cfg)
+Locator::Locator(const LocatorConfig& cfg)
     : cfg_(cfg),
       provider_(parseProvider(cfg.location_provider)),
       lat_(cfg.station_latitude),
@@ -124,6 +124,11 @@ int Locator::stationType() const {
 int Locator::stationId() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return station_id_;
+}
+
+bool Locator::isDynamic() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return provider_ != ProviderType::STATIC;
 }
 
 void Locator::updatePosition(double lat, double lon) {

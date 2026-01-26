@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <iomanip>
@@ -13,15 +14,86 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
-#include "../../common/config/config.hpp"
-#include "../../common/ldm-model/ldm_store.hpp"
-#include "../../common/locator/locator.hpp"
-#include "../../common/messaging/transport.hpp"
-#include "../../common/metrics/metrics.hpp"
+#include "config_reader.hpp"
+#include "locator.hpp"
+#include "metrics.hpp"
+#include "common/ldm-model/ldm_store.hpp"
+#include "common/messaging/transport.hpp"
 
 namespace rj = rapidjson;
 
 namespace {
+
+struct GeneralConfig {
+    bool debug{true};
+    bool prometheus{true};
+    int prometheus_port{9200};
+};
+
+struct CoreConfig {
+    double aom_radius_m{1000.0};
+    int static_map_validity_seconds{3600};
+    std::string ingest_topic{"ldm/updates"};
+    std::string query_topic{"ldm/query"};
+    std::string response_topic{"ldm/response"};
+};
+
+struct CoreConfigBundle {
+    GeneralConfig general;
+    ldm::messaging::MessagingConfig messaging;
+    ldm::locator::LocatorConfig locator;
+    CoreConfig ldm_core;
+};
+
+std::string readNonEmpty(const INIReader& reader,
+                         const std::string& section,
+                         const std::string& key,
+                         const std::string& fallback) {
+    auto value = reader.Get(section, key, fallback);
+    return value.empty() ? fallback : value;
+}
+
+CoreConfigBundle readConfig(const std::string& path) {
+    CoreConfigBundle cfg;
+    INIReader reader(path);
+    if (reader.ParseError() < 0) {
+        spdlog::warn("[LDM-Core] Could not load {}; using defaults", path);
+        return cfg;
+    }
+
+    cfg.general.debug = reader.GetBoolean("general", "debug", cfg.general.debug);
+    cfg.general.prometheus = reader.GetBoolean("general", "prometheus", cfg.general.prometheus);
+    cfg.general.prometheus_port = reader.GetInteger("general", "prometheus_port", cfg.general.prometheus_port);
+
+    cfg.messaging.backend = readNonEmpty(reader, "messaging", "backend", cfg.messaging.backend);
+    cfg.messaging.domain_id = reader.GetInteger("messaging", "domain_id", cfg.messaging.domain_id);
+    cfg.messaging.mqtt_host = readNonEmpty(reader, "messaging", "mqtt_host", cfg.messaging.mqtt_host);
+    cfg.messaging.mqtt_port = reader.GetInteger("messaging", "mqtt_port", cfg.messaging.mqtt_port);
+    cfg.messaging.mqtt_username = reader.Get("messaging", "mqtt_username", cfg.messaging.mqtt_username);
+    cfg.messaging.mqtt_password = reader.Get("messaging", "mqtt_password", cfg.messaging.mqtt_password);
+    cfg.messaging.zenoh_endpoint = readNonEmpty(reader, "messaging", "zenoh_endpoint", cfg.messaging.zenoh_endpoint);
+
+    cfg.locator.station_type = reader.GetInteger("locator", "station_type", cfg.locator.station_type);
+    cfg.locator.station_id = reader.GetInteger("locator", "station_id", cfg.locator.station_id);
+    cfg.locator.station_latitude = reader.GetReal("locator", "station_latitude", cfg.locator.station_latitude);
+    cfg.locator.station_longitude = reader.GetReal("locator", "station_longitude", cfg.locator.station_longitude);
+    cfg.locator.location_provider = readNonEmpty(reader, "locator", "location_provider", cfg.locator.location_provider);
+    cfg.locator.mqtt_host = reader.Get("locator", "mqtt_host", cfg.locator.mqtt_host);
+    cfg.locator.mqtt_port = reader.GetInteger("locator", "mqtt_port", cfg.locator.mqtt_port);
+    cfg.locator.mqtt_topic = reader.Get("locator", "mqtt_topic", cfg.locator.mqtt_topic);
+    cfg.locator.domain_id = reader.GetInteger("locator", "domain_id", cfg.locator.domain_id);
+    cfg.locator.dds_topic = reader.Get("locator", "dds_topic", cfg.locator.dds_topic);
+    cfg.locator.update_interval_ms = reader.GetInteger("locator", "locator_update_interval_ms", cfg.locator.update_interval_ms);
+
+    cfg.ldm_core.aom_radius_m = reader.GetReal("ldm-core", "aom_radius_m", cfg.ldm_core.aom_radius_m);
+    cfg.ldm_core.static_map_validity_seconds = reader.GetInteger("ldm-core", "static_map_validity_seconds",
+                                                                 cfg.ldm_core.static_map_validity_seconds);
+    cfg.ldm_core.ingest_topic = readNonEmpty(reader, "ldm-core", "ingest_topic", cfg.ldm_core.ingest_topic);
+    cfg.ldm_core.query_topic = readNonEmpty(reader, "ldm-core", "query_topic", cfg.ldm_core.query_topic);
+    cfg.ldm_core.response_topic = readNonEmpty(reader, "ldm-core", "response_topic", cfg.ldm_core.response_topic);
+
+    return cfg;
+}
 
 std::string trim(const std::string& s) {
     const auto start = s.find_first_not_of(" \t\r\n");
@@ -387,7 +459,7 @@ bool buildFilteredMapem(const std::string& mapem_json, const MapemFilter& filter
 
 int main() {
     using namespace std::chrono_literals;
-    auto cfg = ldm::config::loadConfig("/config.ini");
+    auto cfg = readConfig("/config.ini");
 
     spdlog::set_level(cfg.general.debug ? spdlog::level::debug : spdlog::level::info);
     spdlog::info("[LDM-Core] Starting LDM core service");
@@ -398,6 +470,17 @@ int main() {
 
     ldm::model::LdmStore store(cfg.ldm_core.aom_radius_m);
     store.setStationReference(lat, lon);
+
+    if (locator.isDynamic() && cfg.locator.update_interval_ms > 0) {
+        const auto update_interval = std::chrono::milliseconds(std::max(250, cfg.locator.update_interval_ms));
+        std::thread([&store, &locator, update_interval]() {
+            while (true) {
+                auto [current_lat, current_lon] = locator.currentPosition();
+                store.setStationReference(current_lat, current_lon);
+                std::this_thread::sleep_for(update_interval);
+            }
+        }).detach();
+    }
 
     std::unique_ptr<ldm::metrics::Metrics> metrics;
     ldm::metrics::Gauge* objects_gauge = nullptr;
@@ -414,9 +497,9 @@ int main() {
     std::mutex mapem_mutex;
     std::string last_mapem_json;
     auto last_mapem_ts = std::chrono::system_clock::time_point{};
-    const auto ingest_topic = cfg.ldm_core.ingest_topic.empty() ? std::string("ldm/updates") : cfg.ldm_core.ingest_topic;
-    const auto query_topic = cfg.ldm_core.query_topic.empty() ? std::string("ldm/query") : cfg.ldm_core.query_topic;
-    const auto response_topic = cfg.ldm_core.response_topic.empty() ? std::string("ldm/response") : cfg.ldm_core.response_topic;
+    const auto ingest_topic = cfg.ldm_core.ingest_topic;
+    const auto query_topic = cfg.ldm_core.query_topic;
+    const auto response_topic = cfg.ldm_core.response_topic;
 
     transport->subscribe(ingest_topic, [&, objects_gauge](const std::string& topic, const std::string& payload) {
         auto count = object_counter.fetch_add(1) + 1;

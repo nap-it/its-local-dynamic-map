@@ -4,12 +4,12 @@ A Local Dynamic Map (LDM) implementation tailored for CPS V2 Clustering deployme
 
 ## Repository layout
 
-- `ldm-core/` – In-memory ldm store, AoM maintenance, metrics exposer.
-- `ldm-ingestion/` – MAPEM and future message ingestion into the ldm.
-- `ldm-query/` – Query and subscription front-end for applications.
-- `common/` – Shared utilities (locator, geometry, metrics, config, LDM model).
-- `agent/` – Compose templates for deployment.
-- `metrics/` – Prometheus configuration and examples.
+- `core/` - In-memory LDM store, AoM maintenance, metrics exposer, locator.
+- `ingestion/` - MAPEM/VAM ingestion into the LDM.
+- `query/` - Query and subscription front-end for applications.
+- `common/` - Shared utilities (geometry, messaging, LDM model).
+- `agent/` - Compose templates for deployment.
+- `metrics/` - Prometheus configuration and examples.
 
 ## Architecture at a glance
 
@@ -45,14 +45,14 @@ cmake -S . -B build
 cmake --build build
 ```
 
-Each service has an individual target (`ldm-core`, `ldm-ingestion`, `ldm-query`).
+Each service has an individual target (`core`, `ingestion`, `query`).
 
 ### Container builds (mirrors cps-v2 images)
 
 The Dockerfiles now follow the same multi-stage layout seen in `cps-v2` (middleware-lib stages + runtime). Building a single service image locally:
 
 ```bash
-docker build -t ldm-core:local -f ldm-core/Dockerfile .
+docker build -t ldm-core:local -f core/Dockerfile .
 ```
 
 The compose file references registry images under `code.nap.av.it.pt:5050/mobility-networks/ldm/*` just like `cps-v2`, but `docker compose build` will override them during development.
@@ -65,11 +65,11 @@ docker compose up --build
 
 ## Configuration
 
-Each service loads `/config.ini`. Example files live next to each executable and follow the same structure adopted by CPS-V2: `[general]`, `[messaging]`, `[locator]` and a service-specific block such as `[ldm-core]`, `[ingestion]` or `[query]`.
+Each service loads `/config.ini`. Example files live next to each executable and follow the same structure adopted by CPS-V2: `[general]`, `[messaging]`, plus service-specific blocks. `ldm-core` uses `[locator]` and `[ldm-core]`, `ldm-ingestion` uses `[ingestion]`, `[mapem]`, `[vam]`, and `ldm-query` uses `[query]`. The query service reads `station_latitude` and `station_longitude` from `[query]` when emitting sample requests.
 
 ### Locator (CPS-V2 parity)
 
-The locator now mirrors the CPS-V2 implementation: it supports `location_provider = static | mqtt | dds`, subscribes to VANETZA CAM/CAM_FULL/VAM feeds (`vanetza/in/cam`, `vanetza/in/cam_full`, `vanetza/in/vam`, `vanetza/own/cam`) over MQTT or DDS, and keeps the latest latitude/longitude/heading in the shared `common/locator` module. The existing `station_latitude`/`station_longitude` fields seed the position for `static` deployments. Each service has its own `[locator]` block so it can run independently or share the same coordinates by mounting a common config.
+The locator now mirrors the CPS-V2 implementation and is core-local: it supports `location_provider = static | mqtt | dds`, subscribes to VANETZA CAM/CAM_FULL/VAM feeds (`vanetza/in/cam`, `vanetza/in/cam_full`, `vanetza/in/vam`, `vanetza/own/cam`) over MQTT or DDS, and keeps the latest latitude/longitude/heading in `core/locator`. The existing `station_latitude`/`station_longitude` fields seed the position for `static` deployments, and `locator_update_interval_ms` controls how often the core refreshes the station reference for dynamic providers.
 
 ### Messaging backends (Fast DDS, MQTT, Zenoh)
 
@@ -90,13 +90,21 @@ The ingestion service now republishes incoming MAPEM traffic on the configured L
 
 ### MAPEM simulation from file
 
-`ldm-ingestion` can publish a static MAPEM JSON on a timer. Set the path in `ldm-ingestion/config.ini`:
+`ldm-ingestion` can publish a static MAPEM JSON on a timer. Set the path in `ingestion/config.ini` under the MAPEM category:
 
 ```ini
-[ingestion]
+[mapem]
 simulate_input = true
 simulation_interval_ms = 2000
-mapem_file = /maps/it2.json
+file_path = /maps/it2.json
 ```
 
 The compose file mounts `./maps` into the container, so you can drop MAPEM files there and reference them via `/maps/<name>.json`.
+
+## TODOs
+
+- DONE: Config parsing - drop `common/config` and parse INI per-module in `main` using CPS-style `INIReader`, mirroring `cps-v2` usage.
+- DONE: Option B (core-only locator) - keep the locator in `ldm-core`, move it out of `common`, refresh station reference periodically for dynamic providers, and drop locator usage/config from `ldm-ingestion` and `ldm-query`.
+- DONE: Module layout - flatten modules to match CPS (`core/`, `ingestion/`, `query/` with no `src/`), update CMake and include paths accordingly.
+- DONE: Metrics layout - align with CPS by keeping metrics code next to the modules that use it (module-local headers/cpp), instead of a shared `common/metrics`.
+- DONE: Ingestion overhaul - add per-message-type sections (MAPEM, VAM, etc.) with enable toggles, topic config, and simulation settings (intervals/files).
