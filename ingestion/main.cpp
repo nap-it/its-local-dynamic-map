@@ -260,8 +260,10 @@ void configureInput(CategoryState& category,
             }
         }
 
-        std::thread([category, output_transport, station_id = cfg.ingestion.station_id, forwarded_counter]() {
-            runSimulation(category.config, category.simulated_payload, output_transport, station_id, forwarded_counter);
+        const auto sim_config = category.config;
+        const auto sim_payload = category.simulated_payload;
+        std::thread([sim_config, sim_payload, output_transport, station_id = cfg.ingestion.station_id, forwarded_counter]() {
+            runSimulation(sim_config, sim_payload, output_transport, station_id, forwarded_counter);
         }).detach();
         return;
     }
