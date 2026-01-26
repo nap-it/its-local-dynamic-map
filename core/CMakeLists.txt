@@ -1,6 +1,9 @@
 add_executable(core
     main.cpp
     locator.cpp
+    geometry_utils.cpp
+    ldm_model.cpp
+    ldm_store.cpp
     metrics.cpp
 )
 

@@ -17,7 +17,7 @@
 #include "config_reader.hpp"
 #include "locator.hpp"
 #include "metrics.hpp"
-#include "common/ldm-model/ldm_store.hpp"
+#include "ldm_store.hpp"
 #include "common/messaging/transport.hpp"
 
 namespace rj = rapidjson;

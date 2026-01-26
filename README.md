@@ -4,10 +4,10 @@ A Local Dynamic Map (LDM) implementation tailored for CPS V2 Clustering deployme
 
 ## Repository layout
 
-- `core/` - In-memory LDM store, AoM maintenance, metrics exposer, locator.
+- `core/` - In-memory LDM store, AoM maintenance, metrics exposer, locator, geometry, LDM model.
 - `ingestion/` - MAPEM/VAM ingestion into the LDM.
 - `query/` - Query and subscription front-end for applications.
-- `common/` - Shared utilities (geometry, messaging, LDM model).
+- `common/` - Shared utilities (messaging).
 - `agent/` - Compose templates for deployment.
 - `metrics/` - Prometheus configuration and examples.
 
@@ -86,15 +86,15 @@ zenoh_endpoint = tcp/127.0.0.1:7447
 
 The new `common/messaging` subsystem exposes a transport interface that emulates Fast DDS, MQTT or Zenoh semantics (mirroring CPS-V2) so that ingestion, core and query components can publish/subscribe on shared topics (`generation/mapem`, `ldm/updates`, `ldm/query`, `ldm/response`). Swapping the backend only requires editing the config files, matching the approach taken in the CPS-V2 generation/processing services.
 
-The ingestion service now republishes incoming MAPEM traffic on the configured LDM topic, the core tracks updates and responds to queries, and the query service continuously exercises the Fast DDS/MQTT/Zenoh interface by issuing sample requests. This mirrors the CPS-V2 workflow while keeping the implementation self-contained.
+The ingestion service now republishes incoming MAPEM/VAM traffic on the configured LDM topic, and selects the input provider per category via `mapem_provider` / `vam_provider` (`static`, `mqtt`, `dds`). MQTT/DDS topics default to `vanetza/out/mapem` and `vanetza/out/vam`, but you can point them at `vanetza/in/*` as needed. The core tracks updates and responds to queries, and the query service continuously exercises the Fast DDS/MQTT/Zenoh interface by issuing sample requests. This mirrors the CPS-V2 workflow while keeping the implementation self-contained.
 
 ### MAPEM simulation from file
 
-`ldm-ingestion` can publish a static MAPEM JSON on a timer. Set the path in `ingestion/config.ini` under the MAPEM category:
+`ldm-ingestion` can publish a static MAPEM JSON on a timer by setting `mapem_provider = static`. Set the path in `ingestion/config.ini` under the MAPEM category:
 
 ```ini
 [mapem]
-simulate_input = true
+mapem_provider = static
 simulation_interval_ms = 2000
 file_path = /maps/it2.json
 ```

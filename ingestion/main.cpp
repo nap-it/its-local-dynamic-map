@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -26,13 +27,19 @@ struct IngestionConfig {
     bool performance_logs{false};
 };
 
+enum class ProviderType { STATIC, MQTT, DDS };
+
 struct CategoryConfig {
     std::string name;
     std::string label;
     bool enable{false};
-    std::vector<std::string> input_topics;
+    ProviderType provider{ProviderType::STATIC};
+    std::string mqtt_host;
+    int mqtt_port{1883};
+    std::string mqtt_topic;
+    int domain_id{0};
+    std::string dds_topic;
     std::vector<std::string> output_topics;
-    bool simulate_input{false};
     int simulation_interval_ms{2000};
     std::string file_path;
 };
@@ -49,6 +56,7 @@ struct CategoryState {
     CategoryConfig config;
     std::string simulated_payload;
     ldm::metrics::Counter* received_counter{nullptr};
+    std::unique_ptr<ldm::messaging::Transport> input_transport;
 };
 
 std::string readFile(const std::string& path) {
@@ -69,6 +77,13 @@ std::string readNonEmpty(const INIReader& reader,
     return value.empty() ? fallback : value;
 }
 
+std::string toLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
 std::vector<std::string> splitTopics(const std::string& value) {
     std::string normalized = value;
     std::replace(normalized.begin(), normalized.end(), ',', ' ');
@@ -79,6 +94,29 @@ std::vector<std::string> splitTopics(const std::string& value) {
         topics.push_back(token);
     }
     return topics;
+}
+
+ProviderType parseProvider(const std::string& value) {
+    const auto lowered = toLower(value);
+    if (lowered == "mqtt") {
+        return ProviderType::MQTT;
+    }
+    if (lowered == "dds" || lowered == "fastdds") {
+        return ProviderType::DDS;
+    }
+    return ProviderType::STATIC;
+}
+
+std::string readProviderKey(const INIReader& reader, const std::string& section, const std::string& fallback) {
+    auto provider = reader.Get(section, "provider", "");
+    if (provider.empty()) {
+        if (section == "mapem") {
+            provider = reader.Get(section, "mapem_provider", "");
+        } else if (section == "vam") {
+            provider = reader.Get(section, "vam_provider", "");
+        }
+    }
+    return provider.empty() ? fallback : provider;
 }
 
 IngestionConfigBundle readConfig(const std::string& path) {
@@ -107,18 +145,26 @@ IngestionConfigBundle readConfig(const std::string& path) {
     cfg.mapem.name = "mapem";
     cfg.mapem.label = "MAPEM";
     cfg.mapem.enable = reader.GetBoolean("mapem", "enable", true);
-    cfg.mapem.input_topics = splitTopics(readNonEmpty(reader, "mapem", "input_topics", "generation/mapem"));
+    cfg.mapem.provider = parseProvider(readProviderKey(reader, "mapem", "static"));
+    cfg.mapem.mqtt_host = readNonEmpty(reader, "mapem", "mqtt_host", cfg.messaging.mqtt_host);
+    cfg.mapem.mqtt_port = reader.GetInteger("mapem", "mqtt_port", cfg.messaging.mqtt_port);
+    cfg.mapem.mqtt_topic = readNonEmpty(reader, "mapem", "mqtt_topic", "vanetza/out/mapem");
+    cfg.mapem.domain_id = reader.GetInteger("mapem", "domain_id", cfg.messaging.domain_id);
+    cfg.mapem.dds_topic = readNonEmpty(reader, "mapem", "dds_topic", "vanetza/out/mapem");
     cfg.mapem.output_topics = splitTopics(readNonEmpty(reader, "mapem", "output_topics", "ldm/updates"));
-    cfg.mapem.simulate_input = reader.GetBoolean("mapem", "simulate_input", true);
     cfg.mapem.simulation_interval_ms = reader.GetInteger("mapem", "simulation_interval_ms", 2000);
     cfg.mapem.file_path = reader.Get("mapem", "file_path", "");
 
     cfg.vam.name = "vam";
     cfg.vam.label = "VAM";
     cfg.vam.enable = reader.GetBoolean("vam", "enable", false);
-    cfg.vam.input_topics = splitTopics(readNonEmpty(reader, "vam", "input_topics", "generation/vam"));
+    cfg.vam.provider = parseProvider(readProviderKey(reader, "vam", "static"));
+    cfg.vam.mqtt_host = readNonEmpty(reader, "vam", "mqtt_host", cfg.messaging.mqtt_host);
+    cfg.vam.mqtt_port = reader.GetInteger("vam", "mqtt_port", cfg.messaging.mqtt_port);
+    cfg.vam.mqtt_topic = readNonEmpty(reader, "vam", "mqtt_topic", "vanetza/out/vam");
+    cfg.vam.domain_id = reader.GetInteger("vam", "domain_id", cfg.messaging.domain_id);
+    cfg.vam.dds_topic = readNonEmpty(reader, "vam", "dds_topic", "vanetza/out/vam");
     cfg.vam.output_topics = splitTopics(readNonEmpty(reader, "vam", "output_topics", "ldm/updates"));
-    cfg.vam.simulate_input = reader.GetBoolean("vam", "simulate_input", false);
     cfg.vam.simulation_interval_ms = reader.GetInteger("vam", "simulation_interval_ms", 2000);
     cfg.vam.file_path = reader.Get("vam", "file_path", "");
 
@@ -199,6 +245,55 @@ void runSimulation(const CategoryConfig& cfg,
     }
 }
 
+void configureInput(CategoryState& category,
+                    const IngestionConfigBundle& cfg,
+                    ldm::messaging::Transport* output_transport,
+                    ldm::metrics::Counter* forwarded_counter) {
+    if (category.config.provider == ProviderType::STATIC) {
+        if (!category.config.file_path.empty()) {
+            category.simulated_payload = readFile(category.config.file_path);
+            if (category.simulated_payload.empty()) {
+                spdlog::warn("[LDM-Ingestion] Could not read {} file '{}'; using synthetic payloads",
+                             category.config.label, category.config.file_path);
+            } else {
+                spdlog::info("[LDM-Ingestion] Loaded {} file '{}'", category.config.label, category.config.file_path);
+            }
+        }
+
+        std::thread([category, output_transport, station_id = cfg.ingestion.station_id, forwarded_counter]() {
+            runSimulation(category.config, category.simulated_payload, output_transport, station_id, forwarded_counter);
+        }).detach();
+        return;
+    }
+
+    ldm::messaging::MessagingConfig input_cfg = cfg.messaging;
+    std::string topic;
+    if (category.config.provider == ProviderType::MQTT) {
+        input_cfg.backend = "mqtt";
+        input_cfg.mqtt_host = category.config.mqtt_host;
+        input_cfg.mqtt_port = category.config.mqtt_port;
+        topic = category.config.mqtt_topic;
+    } else if (category.config.provider == ProviderType::DDS) {
+        input_cfg.backend = "fastdds";
+        input_cfg.domain_id = category.config.domain_id;
+        topic = category.config.dds_topic;
+    }
+
+    if (topic.empty()) {
+        spdlog::warn("[LDM-Ingestion] {} provider configured without topic", category.config.label);
+        return;
+    }
+
+    category.input_transport = ldm::messaging::createTransport(input_cfg);
+    auto* input_ptr = category.input_transport.get();
+    CategoryState* category_ptr = &category;
+    input_ptr->subscribe(topic, [category_ptr, output_transport, &cfg, forwarded_counter](
+                                      const std::string& source_topic, const std::string& payload) {
+        publishUpdate(category_ptr->config, payload, source_topic, output_transport,
+                      cfg.ingestion.station_id, category_ptr->received_counter, forwarded_counter);
+    });
+}
+
 }  // namespace
 
 int main() {
@@ -221,41 +316,14 @@ int main() {
     auto* transport_ptr = transport.get();
 
     std::vector<CategoryState> categories;
-    categories.push_back(CategoryState{cfg.mapem, "", mapem_counter});
-    categories.push_back(CategoryState{cfg.vam, "", vam_counter});
+    categories.push_back(CategoryState{cfg.mapem, "", mapem_counter, nullptr});
+    categories.push_back(CategoryState{cfg.vam, "", vam_counter, nullptr});
 
     for (auto& category : categories) {
         if (!category.config.enable) {
             continue;
         }
-
-        if (category.config.simulate_input && !category.config.file_path.empty()) {
-            category.simulated_payload = readFile(category.config.file_path);
-            if (category.simulated_payload.empty()) {
-                spdlog::warn("[LDM-Ingestion] Could not read {} file '{}'; using synthetic payloads",
-                             category.config.label, category.config.file_path);
-            } else {
-                spdlog::info("[LDM-Ingestion] Loaded {} file '{}'", category.config.label, category.config.file_path);
-            }
-        }
-
-        for (const auto& input_topic : category.config.input_topics) {
-            if (input_topic.empty()) {
-                continue;
-            }
-            CategoryState* category_ptr = &category;
-            transport->subscribe(input_topic, [category_ptr, transport_ptr, &cfg, forwarded_counter](
-                                                   const std::string& topic, const std::string& payload) {
-                publishUpdate(category_ptr->config, payload, topic, transport_ptr,
-                              cfg.ingestion.station_id, category_ptr->received_counter, forwarded_counter);
-            });
-        }
-
-        if (category.config.simulate_input) {
-            std::thread([category, transport_ptr, station_id = cfg.ingestion.station_id, forwarded_counter]() {
-                runSimulation(category.config, category.simulated_payload, transport_ptr, station_id, forwarded_counter);
-            }).detach();
-        }
+        configureInput(category, cfg, transport_ptr, forwarded_counter);
     }
 
     while (true) {

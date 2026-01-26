@@ -9,14 +9,11 @@ file(GLOB FASTDDS_SRC
 add_subdirectory(${CMAKE_SOURCE_DIR}/paho-mqtt-cpp-wrapper ${CMAKE_BINARY_DIR}/paho-mqtt-cpp-wrapper)
 
 add_library(common
-    geometry/geometry_utils.cpp
     messaging/fastdds_transport.cpp
     messaging/in_memory_bus.cpp
     messaging/mqtt_transport.cpp
     messaging/transport.cpp
     messaging/zenoh_transport.cpp
-    ldm-model/ldm_model.cpp
-    ldm-model/ldm_store.cpp
     ${FASTDDS_SRC}
 )
 
