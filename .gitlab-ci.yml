@@ -68,14 +68,9 @@ before_script:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG != "latest"'
       changes:
         - $DOCKERFILE_PATH/**
-        - common/**
-        - CMakeLists.txt
     # 2) Non-main branch pipelines
     - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
-      changes:
-        - $DOCKERFILE_PATH/**
-        - common/**
-        - CMakeLists.txt
+
 # ------------------------------------------------------------------------------
 # 2) BUILD JOBS (one per component × arch)
 # ------------------------------------------------------------------------------
@@ -164,14 +159,9 @@ build_query_arm64:
     - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG != "latest"'
       changes:
         - $DOCKERFILE_PATH/**
-        - common/**
-        - CMakeLists.txt
     # Non-main branch pipelines
     - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
-      changes:
-        - $DOCKERFILE_PATH/**
-        - common/**
-        - CMakeLists.txt
+
 # ------------------------------------------------------------------------------
 # 4) MANIFEST JOBS (one per component)
 # ------------------------------------------------------------------------------

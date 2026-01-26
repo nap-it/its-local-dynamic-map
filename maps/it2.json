@@ -17,7 +17,7 @@
                   }
                 },
                 "attributes": {
-                    "dWidth": -100
+                  "dWidth": -100
                 }
               },
               {
@@ -68,7 +68,12 @@
               "egressPath": true
             },
             "laneType": {
-              "sidewalk": {}
+              "sidewalk": {
+                "sidewalk-RevocableLane": false,
+                "bicyleUseAllowed": true,
+                "isSidewalkFlyOverLane": false,
+                "walkBikes": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -117,7 +122,7 @@
                   }
                 },
                 "attributes": {
-                    "dWidth": -100
+                  "dWidth": -100
                 }
               },
               {
@@ -136,7 +141,12 @@
               "egressPath": true
             },
             "laneType": {
-              "sidewalk": {}
+              "sidewalk": {
+                "sidewalk-RevocableLane": false,
+                "bicyleUseAllowed": true,
+                "isSidewalkFlyOverLane": false,
+                "walkBikes": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -189,6 +199,25 @@
                   "yieldAllwaysRequired": false
                 }
               }
+            },
+            {
+              "connectingLane": {
+                "lane": 8,
+                "maneuver": {
+                  "caution": false,
+                  "goWithHalt": false,
+                  "maneuverLaneChangeAllowed": false,
+                  "maneuverLeftAllowed": false,
+                  "maneuverLeftTurnOnRedAllowed": false,
+                  "maneuverNoStoppingAllowed": false,
+                  "maneuverRightAllowed": false,
+                  "maneuverRightTurnOnRedAllowed": false,
+                  "maneuverStraightAllowed": false,
+                  "maneuverUTurnAllowed": false,
+                  "reserved1": false,
+                  "yieldAllwaysRequired": false
+                }
+              }
             }
           ]
         },
@@ -204,7 +233,7 @@
                   }
                 },
                 "attributes": {
-                    "dWidth": -100
+                  "dWidth": -100
                 }
               },
               {
@@ -223,7 +252,12 @@
               "egressPath": true
             },
             "laneType": {
-              "sidewalk": {}
+              "sidewalk": {
+                "sidewalk-RevocableLane": false,
+                "bicyleUseAllowed": true,
+                "isSidewalkFlyOverLane": false,
+                "walkBikes": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -331,6 +365,25 @@
                   "yieldAllwaysRequired": false
                 }
               }
+            },
+            {
+              "connectingLane": {
+                "lane": 6,
+                "maneuver": {
+                  "caution": false,
+                  "goWithHalt": false,
+                  "maneuverLaneChangeAllowed": false,
+                  "maneuverLeftAllowed": false,
+                  "maneuverLeftTurnOnRedAllowed": false,
+                  "maneuverNoStoppingAllowed": false,
+                  "maneuverRightAllowed": false,
+                  "maneuverRightTurnOnRedAllowed": false,
+                  "maneuverStraightAllowed": true,
+                  "maneuverUTurnAllowed": false,
+                  "reserved1": false,
+                  "yieldAllwaysRequired": false
+                }
+              }
             }
           ]
         },
@@ -362,7 +415,17 @@
               "egressPath": true
             },
             "laneType": {
-              "crosswalk": {}
+              "crosswalk": {
+                "crosswalkRevocableLane": false,
+                "bicyleUseAllowed": false,
+                "isXwalkFlyOverLane": false,
+                "fixedCycleTime": false,
+                "biDirectionalCycleTimes": false,
+                "hasPushToWalkButton": false,
+                "audioSupport": false,
+                "rfSignalRequestPresent": false,
+                "unsignalizedSegmentsPresent": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -440,13 +503,63 @@
               }
             ]
           },
+          "connectsTo": [
+            {
+              "connectingLane": {
+                "lane": 2,
+                "maneuver": {
+                  "caution": false,
+                  "goWithHalt": false,
+                  "maneuverLaneChangeAllowed": false,
+                  "maneuverLeftAllowed": false,
+                  "maneuverLeftTurnOnRedAllowed": false,
+                  "maneuverNoStoppingAllowed": false,
+                  "maneuverRightAllowed": false,
+                  "maneuverRightTurnOnRedAllowed": false,
+                  "maneuverStraightAllowed": true,
+                  "maneuverUTurnAllowed": false,
+                  "reserved1": false,
+                  "yieldAllwaysRequired": false
+                }
+              }
+            },
+            {
+              "connectingLane": {
+                "lane": 15,
+                "maneuver": {
+                  "caution": false,
+                  "goWithHalt": false,
+                  "maneuverLaneChangeAllowed": false,
+                  "maneuverLeftAllowed": false,
+                  "maneuverLeftTurnOnRedAllowed": false,
+                  "maneuverNoStoppingAllowed": false,
+                  "maneuverRightAllowed": false,
+                  "maneuverRightTurnOnRedAllowed": false,
+                  "maneuverStraightAllowed": true,
+                  "maneuverUTurnAllowed": false,
+                  "reserved1": false,
+                  "yieldAllwaysRequired": false
+                }
+              }
+            }
+          ],
           "laneAttributes": {
             "directionalUse": {
               "ingressPath": true,
               "egressPath": true
             },
             "laneType": {
-              "crosswalk": {}
+              "crosswalk": {
+                "crosswalkRevocableLane": false,
+                "bicyleUseAllowed": false,
+                "isXwalkFlyOverLane": false,
+                "fixedCycleTime": false,
+                "biDirectionalCycleTimes": false,
+                "hasPushToWalkButton": false,
+                "audioSupport": false,
+                "rfSignalRequestPresent": false,
+                "unsignalizedSegmentsPresent": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -474,7 +587,7 @@
                   }
                 },
                 "attributes": {
-                    "dWidth": -100
+                  "dWidth": -100
                 }
               },
               {
@@ -493,7 +606,12 @@
               "egressPath": true
             },
             "laneType": {
-              "sidewalk": {}
+              "sidewalk": {
+                "sidewalk-RevocableLane": false,
+                "bicyleUseAllowed": true,
+                "isSidewalkFlyOverLane": false,
+                "walkBikes": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -599,7 +717,7 @@
                   }
                 },
                 "attributes": {
-                    "dWidth": -100
+                  "dWidth": -100
                 }
               },
               {
@@ -618,7 +736,12 @@
               "egressPath": true
             },
             "laneType": {
-              "sidewalk": {}
+              "sidewalk": {
+                "sidewalk-RevocableLane": false,
+                "bicyleUseAllowed": true,
+                "isSidewalkFlyOverLane": false,
+                "walkBikes": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -667,7 +790,7 @@
                   }
                 },
                 "attributes": {
-                    "dWidth": -100
+                  "dWidth": -100
                 }
               },
               {
@@ -782,7 +905,12 @@
               "egressPath": true
             },
             "laneType": {
-              "sidewalk": {}
+              "sidewalk": {
+                "sidewalk-RevocableLane": false,
+                "bicyleUseAllowed": true,
+                "isSidewalkFlyOverLane": false,
+                "walkBikes": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -831,7 +959,7 @@
                   }
                 },
                 "attributes": {
-                    "dWidth": -100
+                  "dWidth": -100
                 }
               },
               {
@@ -850,7 +978,7 @@
                   }
                 },
                 "attributes": {
-                    "dWidth": -250
+                  "dWidth": -250
                 }
               }
             ]
@@ -861,7 +989,12 @@
               "egressPath": true
             },
             "laneType": {
-              "sidewalk": {}
+              "sidewalk": {
+                "sidewalk-RevocableLane": false,
+                "bicyleUseAllowed": true,
+                "isSidewalkFlyOverLane": false,
+                "walkBikes": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -962,7 +1095,12 @@
               "egressPath": true
             },
             "laneType": {
-              "sidewalk": {}
+              "sidewalk": {
+                "sidewalk-RevocableLane": false,
+                "bicyleUseAllowed": true,
+                "isSidewalkFlyOverLane": false,
+                "walkBikes": false
+              }
             },
             "sharedWith": {
               "busVehicleTraffic": false,
@@ -976,7 +1114,47 @@
               "taxiVehicleTraffic": false,
               "trackedVehicleTraffic": false
             }
-          }
+          },
+          "connectsTo": [
+            {
+              "connectingLane": {
+                "lane": 7,
+                "maneuver": {
+                  "caution": false,
+                  "goWithHalt": false,
+                  "maneuverLaneChangeAllowed": false,
+                  "maneuverLeftAllowed": false,
+                  "maneuverLeftTurnOnRedAllowed": false,
+                  "maneuverNoStoppingAllowed": false,
+                  "maneuverRightAllowed": false,
+                  "maneuverRightTurnOnRedAllowed": false,
+                  "maneuverStraightAllowed": true,
+                  "maneuverUTurnAllowed": false,
+                  "reserved1": false,
+                  "yieldAllwaysRequired": false
+                }
+              }
+            },
+            {
+              "connectingLane": {
+                "lane": 8,
+                "maneuver": {
+                  "caution": false,
+                  "goWithHalt": false,
+                  "maneuverLaneChangeAllowed": false,
+                  "maneuverLeftAllowed": false,
+                  "maneuverLeftTurnOnRedAllowed": false,
+                  "maneuverNoStoppingAllowed": false,
+                  "maneuverRightAllowed": false,
+                  "maneuverRightTurnOnRedAllowed": false,
+                  "maneuverStraightAllowed": true,
+                  "maneuverUTurnAllowed": false,
+                  "reserved1": false,
+                  "yieldAllwaysRequired": false
+                }
+              }
+            }
+          ]
         },
         {
           "laneID": 6,
