@@ -38,6 +38,56 @@ A Local Dynamic Map (LDM) implementation tailored for CPS V2 Clustering deployme
 
 The external LDM client sits outside the LDM stack and mirrors the CPS sensor-adapter style: it issues an initial query, subscribes for update notifications, and only re-queries when needed. Internally, `ldm-core` remains the authoritative store; `ldm-ingestion` feeds it, and `ldm-query` is a thin frontend for app-level access.
 
+The current CPS-V2 LDM client issues MAPEM and VAM queries back-to-back per cycle and supplies the AOI in each request. The LDM core enforces AoM independently when ingesting/storing objects.
+
+### Mermaid flows (ingestion + queries)
+
+```mermaid
+flowchart TB
+  subgraph External
+    MAPEM_SRC["MAPEM source<br/>mapem-toolkit"]
+    VAM_SRC["VAM source<br/>simulator"]
+    CPS_CLIENT["CPS-V2<br/>LDM client"]
+  end
+
+  subgraph LDM
+    INGEST["ldm-ingestion"]
+    CORE["ldm-core"]
+    QUERY["ldm-query"]
+  end
+
+  MAPEM_SRC -->|"vanetza/out/mapem"| INGEST
+  VAM_SRC -->|"vanetza/out/vam"| INGEST
+  INGEST -->|"ldm/updates"| CORE
+
+  CPS_CLIENT -->|"ldm/query<br/>AOI + type"| CORE
+  CORE -->|"ldm/response"| CPS_CLIENT
+  CORE -->|"ldm/updates"| CPS_CLIENT
+
+  QUERY -->|"ldm/query<br/>sample requests"| CORE
+  CORE -->|"ldm/response"| QUERY
+```
+
+### MAPEM toolchain example (vanetza + mapem-toolkit)
+
+The MAPEM toolchain typically looks like this:
+
+```mermaid
+flowchart TB
+  TOOLKIT["mapem-toolkit<br/>external host"]
+  VANETZA_IN["vanetza/in/mapem"]
+  VANETZA_OUT["vanetza/out/mapem"]
+  INGEST["ldm-ingestion"]
+  CORE["ldm-core"]
+
+  TOOLKIT -->|"publish MAPEM"| VANETZA_IN
+  VANETZA_IN -->|"relayed"| VANETZA_OUT
+  VANETZA_OUT --> INGEST
+  INGEST -->|"ldm/updates"| CORE
+```
+
+Depending on deployment, `ldm-ingestion` can subscribe to `vanetza/out/mapem` (default) or be pointed to `vanetza/in/mapem` directly.
+
 ## Build
 
 ```bash
@@ -116,7 +166,7 @@ file_path = /maps/vam_sample.json
 
 ### Query protocol (MAPEM + VAM)
 
-Queries are JSON payloads that include a request id, query type, and AOI:
+Queries are JSON payloads that include a request id, query type, and AOI (client-provided):
 
 ```json
 {
@@ -128,7 +178,7 @@ Queries are JSON payloads that include a request id, query type, and AOI:
 }
 ```
 
-Responses include a `response_timestamp`, a `has_mapem`/`has_vams` flag, and payloads filtered to the AOI. MAPEM intersections include `last_update_ts` per intersection, and VAM results carry raw payloads plus timestamps.
+Responses include a `response_timestamp`, a `has_mapem`/`has_vams` flag, and payloads filtered to the AOI. MAPEM intersections include `last_update_ts` per intersection, and VAM results carry raw payloads plus timestamps (and orientation when available).
 
 ## TODOs
 
