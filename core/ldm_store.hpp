@@ -21,6 +21,8 @@ public:
         const Geometry& areaOfInterest,
         const std::function<bool(const LdmDataObject&)>& filter);
 
+    std::size_t size() const;
+
     std::vector<LdmLane> findLanesNearPosition(double lat, double lon, double radius_m) const;
     std::optional<LdmLane> findClosestLane(double lat, double lon) const;
     std::optional<LdmIntersection> findIntersectionById(int intersection_id) const;

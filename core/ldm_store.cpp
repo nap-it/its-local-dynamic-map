@@ -20,6 +20,22 @@ inline double haversine(double lat1, double lon1, double lat2, double lon2) {
     return kEarthRadiusMeters * c;
 }
 
+const char* typeName(ldm::model::LdmDataType type) {
+    switch (type) {
+        case ldm::model::LdmDataType::MAP_INTERSECTION:
+            return "map_intersection";
+        case ldm::model::LdmDataType::MAP_LANE:
+            return "map_lane";
+        case ldm::model::LdmDataType::MAP_SPEED_LIMIT:
+            return "map_speed_limit";
+        case ldm::model::LdmDataType::MAP_SIGNAL_GROUP:
+            return "map_signal_group";
+        case ldm::model::LdmDataType::VAM:
+            return "vam";
+    }
+    return "unknown";
+}
+
 }  // namespace
 
 namespace ldm::model {
@@ -34,18 +50,28 @@ void LdmStore::setStationReference(double lat, double lon) {
 
 void LdmStore::upsertObject(const LdmDataObject& obj) {
     std::lock_guard<std::mutex> lock(mutex_);
-    objects_[obj.id] = obj;
-    if (obj.type == LdmDataType::MAP_INTERSECTION && obj.attributes) {
-        auto it = obj.attributes->FindMember("intersectionId");
-        if (it != obj.attributes->MemberEnd() && it->value.IsInt()) {
-            LdmIntersection inter{};
-            inter.intersection_id = it->value.GetInt();
-            inter.ref_lat = !obj.geom.lats.empty() ? obj.geom.lats.front() : 0.0;
-            inter.ref_lon = !obj.geom.lons.empty() ? obj.geom.lons.front() : 0.0;
-            intersections_[inter.intersection_id] = inter;
+    if (!obj.geom.lats.empty() && !obj.geom.lons.empty()) {
+        double dist = haversine(station_lat_, station_lon_, obj.geom.lats.front(), obj.geom.lons.front());
+        if (dist > aom_radius_m_) {
+            spdlog::debug("[LDM-Core] Dropping {} outside AoM id={}", typeName(obj.type), obj.id.object_id);
+            return;
         }
     }
-    if (obj.type == LdmDataType::MAP_LANE && obj.attributes) {
+
+    auto existing = objects_.find(obj.id);
+    if (existing != objects_.end() && obj.timestamp <= existing->second.timestamp) {
+        spdlog::debug("[LDM-Core] Ignoring stale {} update id={}", typeName(obj.type), obj.id.object_id);
+        return;
+    }
+
+    objects_[obj.id] = obj;
+    if (obj.type == LdmDataType::MAP_INTERSECTION) {
+        LdmIntersection inter{};
+        inter.intersection_id = static_cast<int>(obj.id.object_id);
+        inter.ref_lat = !obj.geom.lats.empty() ? obj.geom.lats.front() : 0.0;
+        inter.ref_lon = !obj.geom.lons.empty() ? obj.geom.lons.front() : 0.0;
+        intersections_[inter.intersection_id] = inter;
+    } else if (obj.type == LdmDataType::MAP_LANE && obj.attributes) {
         auto laneId = obj.attributes->FindMember("laneId");
         auto intersectionId = obj.attributes->FindMember("intersectionId");
         if (laneId != obj.attributes->MemberEnd() && intersectionId != obj.attributes->MemberEnd() &&
@@ -68,20 +94,32 @@ std::vector<LdmDataObject> LdmStore::queryByAreaAndFilter(
     const Geometry& areaOfInterest, const std::function<bool(const LdmDataObject&)>& filter) {
     std::vector<LdmDataObject> result;
     std::lock_guard<std::mutex> lock(mutex_);
+    const auto now = std::chrono::system_clock::now();
+    const double radius_m = (areaOfInterest.type == Geometry::Type::POINT && areaOfInterest.radius_m > 0.0)
+                                ? areaOfInterest.radius_m
+                                : aom_radius_m_;
     for (const auto& [id, obj] : objects_) {
+        if (obj.time_validity.count() > 0 && now - obj.timestamp > obj.time_validity) {
+            continue;
+        }
         if (filter && !filter(obj)) {
             continue;
         }
-        if (areaOfInterest.type == Geometry::Type::POINT && !obj.geom.lats.empty()) {
+        if (areaOfInterest.type == Geometry::Type::POINT && !obj.geom.lats.empty() && !obj.geom.lons.empty()) {
             double dist = haversine(areaOfInterest.lats.front(), areaOfInterest.lons.front(), obj.geom.lats.front(),
                                     obj.geom.lons.front());
-            if (dist > aom_radius_m_) {
+            if (dist > radius_m) {
                 continue;
             }
         }
         result.push_back(obj);
     }
     return result;
+}
+
+std::size_t LdmStore::size() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return objects_.size();
 }
 
 std::vector<LdmLane> LdmStore::findLanesNearPosition(double lat, double lon, double radius_m) const {
@@ -129,15 +167,14 @@ void LdmStore::runMaintenance() {
     for (auto it = objects_.begin(); it != objects_.end();) {
         const auto& obj = it->second;
         if (obj.time_validity.count() > 0 && now - obj.timestamp > obj.time_validity) {
-            spdlog::debug("[LDM-Core] Expiring object station={} local={}", obj.id.station_id, obj.id.local_id);
+            spdlog::debug("[LDM-Core] Expiring {} id={}", typeName(obj.type), obj.id.object_id);
             it = objects_.erase(it);
             continue;
         }
-        if (!obj.geom.lats.empty()) {
+        if (!obj.geom.lats.empty() && !obj.geom.lons.empty()) {
             double dist = haversine(station_lat_, station_lon_, obj.geom.lats.front(), obj.geom.lons.front());
             if (dist > aom_radius_m_) {
-                spdlog::debug("[LDM-Core] Dropping object outside AoM station={} local={}", obj.id.station_id,
-                              obj.id.local_id);
+                spdlog::debug("[LDM-Core] Dropping {} outside AoM id={}", typeName(obj.type), obj.id.object_id);
                 it = objects_.erase(it);
                 continue;
             }

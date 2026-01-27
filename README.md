@@ -14,7 +14,7 @@ A Local Dynamic Map (LDM) implementation tailored for CPS V2 Clustering deployme
 ## Architecture at a glance
 
 ```
-          (MAPEM source / simulator)
+          (MAPEM/VAM source / simulator)
                      |
                      v
              ldm-ingestion
@@ -67,6 +67,8 @@ docker compose up --build
 
 Each service loads `/config.ini`. Example files live next to each executable and follow the same structure adopted by CPS-V2: `[general]`, `[messaging]`, plus service-specific blocks. `ldm-core` uses `[locator]` and `[ldm-core]`, `ldm-ingestion` uses `[ingestion]`, `[mapem]`, `[vam]`, and `ldm-query` uses `[query]`. The query service reads `station_latitude` and `station_longitude` from `[query]` when emitting sample requests.
 
+In `ldm-core`, `map_validity_seconds` controls MAPEM retention, and `vam_validity_seconds` defines the TTL for dynamic VAM objects.
+
 ### Locator (CPS-V2 parity)
 
 The locator now mirrors the CPS-V2 implementation and is core-local: it supports `location_provider = static | mqtt | dds`, subscribes to VANETZA CAM/CAM_FULL/VAM feeds (`vanetza/in/cam`, `vanetza/in/cam_full`, `vanetza/in/vam`, `vanetza/own/cam`) over MQTT or DDS, and keeps the latest latitude/longitude/heading in `core/locator`. The existing `station_latitude`/`station_longitude` fields seed the position for `static` deployments, and `locator_update_interval_ms` controls how often the core refreshes the station reference for dynamic providers.
@@ -100,6 +102,33 @@ file_path = /maps/it2.json
 ```
 
 The compose file mounts `./maps` into the container, so you can drop MAPEM files there and reference them via `/maps/<name>.json`.
+
+### VAM simulation from file
+
+`ldm-ingestion` can also publish static VAM payloads by setting `vam_provider = static`. Provide the VAM JSON file path:
+
+```ini
+[vam]
+vam_provider = static
+simulation_interval_ms = 1000
+file_path = /maps/vam_sample.json
+```
+
+### Query protocol (MAPEM + VAM)
+
+Queries are JSON payloads that include a request id, query type, and AOI:
+
+```json
+{
+  "request_id": 1,
+  "station_id": 1,
+  "query_type": "mapem",
+  "aoi": { "lat": 40.63, "lon": -8.65, "radius_m": 500 },
+  "mapem_detail": { "crosswalk": true, "signalGroups": false }
+}
+```
+
+Responses include a `response_timestamp`, a `has_mapem`/`has_vams` flag, and payloads filtered to the AOI. MAPEM intersections include `last_update_ts` per intersection, and VAM results carry raw payloads plus timestamps.
 
 ## TODOs
 

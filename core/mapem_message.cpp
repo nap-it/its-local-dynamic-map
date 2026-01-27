@@ -129,7 +129,9 @@ namespace ldm::mapem {
 Filter ParseFilter(const rj::Value& root) {
     Filter filter;
     const rj::Value* filter_obj = nullptr;
-    if (root.HasMember("mapem_filter") && root["mapem_filter"].IsObject()) {
+    if (root.HasMember("mapem_detail") && root["mapem_detail"].IsObject()) {
+        filter_obj = &root["mapem_detail"];
+    } else if (root.HasMember("mapem_filter") && root["mapem_filter"].IsObject()) {
         filter_obj = &root["mapem_filter"];
     }
     const rj::Value& source = filter_obj ? *filter_obj : root;

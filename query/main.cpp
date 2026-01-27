@@ -7,10 +7,15 @@
 #include <thread>
 
 #include <spdlog/spdlog.h>
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 
 #include "config_reader.hpp"
 #include "metrics.hpp"
 #include "common/messaging/transport.hpp"
+
+namespace rj = rapidjson;
 
 namespace {
 
@@ -41,6 +46,7 @@ struct QueryConfig {
     int request_interval_ms{4000};
     double station_latitude{0.0};
     double station_longitude{0.0};
+    std::string query_type{"mapem"};
 };
 
 struct QueryConfigBundle {
@@ -86,6 +92,7 @@ QueryConfigBundle readConfig(const std::string& path) {
     cfg.query.request_interval_ms = reader.GetInteger("query", "request_interval_ms", cfg.query.request_interval_ms);
     cfg.query.station_latitude = reader.GetReal("query", "station_latitude", cfg.query.station_latitude);
     cfg.query.station_longitude = reader.GetReal("query", "station_longitude", cfg.query.station_longitude);
+    cfg.query.query_type = readNonEmpty(reader, "query", "query_type", cfg.query.query_type);
 
     return cfg;
 }
@@ -117,11 +124,23 @@ int main() {
     int sequence = 0;
     while (g_running.load()) {
         if (cfg.query.auto_request) {
-            std::ostringstream query_payload;
-            query_payload << "request_id=" << sequence << ";lat=" << cfg.query.station_latitude
-                          << ";lon=" << cfg.query.station_longitude;
+            rj::Document doc;
+            doc.SetObject();
+            auto& alloc = doc.GetAllocator();
+            doc.AddMember("request_id", sequence, alloc);
+            doc.AddMember("station_id", cfg.query.station_id, alloc);
+            doc.AddMember("query_type", rj::Value(cfg.query.query_type.c_str(), alloc), alloc);
+            rj::Value aoi(rj::kObjectType);
+            aoi.AddMember("lat", cfg.query.station_latitude, alloc);
+            aoi.AddMember("lon", cfg.query.station_longitude, alloc);
+            aoi.AddMember("radius_m", 500.0, alloc);
+            doc.AddMember("aoi", aoi, alloc);
+            rj::StringBuffer buffer;
+            rj::Writer<rj::StringBuffer> writer(buffer);
+            doc.Accept(writer);
+            std::string payload = buffer.GetString();
             spdlog::debug("[LDM-Query] Publishing request {} on {}", sequence, request_topic);
-            transport->publish(request_topic, query_payload.str());
+            transport->publish(request_topic, payload);
             if (issued_queries) {
                 issued_queries->Increment();
             }
