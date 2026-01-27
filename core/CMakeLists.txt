@@ -1,6 +1,7 @@
 add_executable(core
     main.cpp
     locator.cpp
+    mapem_message.cpp
     geometry_utils.cpp
     ldm_model.cpp
     ldm_store.cpp
