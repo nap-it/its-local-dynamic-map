@@ -164,7 +164,7 @@ simulation_interval_ms = 1000
 file_path = /maps/vam_sample.json
 ```
 
-### Query protocol (MAPEM + VAM)
+### Query protocol (MAPEM + VAM + CPM)
 
 Queries are JSON payloads that include a request id, query type, and AOI (client-provided):
 
@@ -179,6 +179,19 @@ Queries are JSON payloads that include a request id, query type, and AOI (client
 ```
 
 Responses include a `response_timestamp`, a `has_mapem`/`has_vams` flag, and payloads filtered to the AOI. MAPEM intersections include `last_update_ts` per intersection, and VAM results carry raw payloads plus timestamps (and orientation when available).
+
+CPM is query/response-only from clients (`ldm/query` -> `ldm/response`) and is ingested by `ldm-core` directly from Vanetza topics (`vanetza/in/cpm`, `vanetza/out/cpm`). Supported CPM query types are:
+- `cpm_state`
+- `cpm_objects`
+- `cpm_perception_regions`
+
+CPM query filter keys:
+- `include_own`, `include_external`
+- `max_object_age_ms`, `max_sic_age_s`, `max_perception_region_age_s`
+- `station_ids`, `limit_objects`, `limit_sensors`, `limit_regions`
+- optional `if_cpm_version` fast-path token
+
+CPM responses include `has_cpm`, `cpm_version`, `cpm_not_modified`, `cpm_summary`, and `cpm_state` (when modified). `cpm_state[].objects` contains object IDs only.
 
 ## TODOs
 

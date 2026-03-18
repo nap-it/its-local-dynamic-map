@@ -3,13 +3,10 @@
 #include <chrono>
 #include <csignal>
 #include <cctype>
-#include <iomanip>
-#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
-#include <unordered_set>
 
 #include <spdlog/spdlog.h>
 #include <rapidjson/document.h>
@@ -17,6 +14,8 @@
 #include <rapidjson/writer.h>
 
 #include "config_reader.hpp"
+#include "cpm_message.hpp"
+#include "cpm_store.hpp"
 #include "locator.hpp"
 #include "mapem_message.hpp"
 #include "metrics.hpp"
@@ -50,8 +49,20 @@ struct CoreConfig {
     int map_validity_seconds{3600};
     int vam_validity_seconds{5};
     std::string ingest_topic{"ldm/updates"};
+    std::string update_topic{"ldm/updates"};
     std::string query_topic{"ldm/query"};
     std::string response_topic{"ldm/response"};
+
+    bool cpm_ingest_enable{true};
+    std::string cpm_topic_in{"vanetza/in/cpm"};
+    std::string cpm_topic_out{"vanetza/out/cpm"};
+    int local_station_id{0};
+    int object_ttl_ms{5000};
+    int sic_ttl_s{1800};
+    int perception_region_ttl_s{1800};
+    int cpm_sweeper_interval_ms{1000};
+    int cpm_max_objects_per_station{2000};
+    int cpm_max_stations{512};
 };
 
 struct CoreConfigBundle {
@@ -71,6 +82,10 @@ struct QueryRequest {
     double aoi_radius_m{0.0};
     bool has_mapem_detail{false};
     ldm::mapem::Filter mapem_filter{};
+    bool has_cpm_filter{false};
+    ldm::cpm::CpmFilter cpm_filter{};
+    bool has_if_cpm_version{false};
+    uint64_t if_cpm_version{0};
 };
 
 std::string readNonEmpty(const INIReader& reader,
@@ -127,8 +142,26 @@ CoreConfigBundle readConfig(const std::string& path) {
     cfg.ldm_core.vam_validity_seconds = reader.GetInteger("ldm-core", "vam_validity_seconds",
                                                           cfg.ldm_core.vam_validity_seconds);
     cfg.ldm_core.ingest_topic = readNonEmpty(reader, "ldm-core", "ingest_topic", cfg.ldm_core.ingest_topic);
+    cfg.ldm_core.update_topic = readNonEmpty(reader, "ldm-core", "update_topic", cfg.ldm_core.update_topic);
     cfg.ldm_core.query_topic = readNonEmpty(reader, "ldm-core", "query_topic", cfg.ldm_core.query_topic);
     cfg.ldm_core.response_topic = readNonEmpty(reader, "ldm-core", "response_topic", cfg.ldm_core.response_topic);
+    cfg.ldm_core.cpm_ingest_enable =
+        reader.GetBoolean("ldm-core", "cpm_ingest_enable", cfg.ldm_core.cpm_ingest_enable);
+    cfg.ldm_core.cpm_topic_in = readNonEmpty(reader, "ldm-core", "cpm_topic_in", cfg.ldm_core.cpm_topic_in);
+    cfg.ldm_core.cpm_topic_out = readNonEmpty(reader, "ldm-core", "cpm_topic_out", cfg.ldm_core.cpm_topic_out);
+    cfg.ldm_core.local_station_id = reader.GetInteger("ldm-core",
+                                                      "local_station_id",
+                                                      cfg.locator.station_id > 0 ? cfg.locator.station_id
+                                                                                 : cfg.ldm_core.local_station_id);
+    cfg.ldm_core.object_ttl_ms = reader.GetInteger("ldm-core", "object_ttl_ms", cfg.ldm_core.object_ttl_ms);
+    cfg.ldm_core.sic_ttl_s = reader.GetInteger("ldm-core", "sic_ttl_s", cfg.ldm_core.sic_ttl_s);
+    cfg.ldm_core.perception_region_ttl_s =
+        reader.GetInteger("ldm-core", "perception_region_ttl_s", cfg.ldm_core.perception_region_ttl_s);
+    cfg.ldm_core.cpm_sweeper_interval_ms =
+        reader.GetInteger("ldm-core", "cpm_sweeper_interval_ms", cfg.ldm_core.cpm_sweeper_interval_ms);
+    cfg.ldm_core.cpm_max_objects_per_station =
+        reader.GetInteger("ldm-core", "cpm_max_objects_per_station", cfg.ldm_core.cpm_max_objects_per_station);
+    cfg.ldm_core.cpm_max_stations = reader.GetInteger("ldm-core", "cpm_max_stations", cfg.ldm_core.cpm_max_stations);
 
     return cfg;
 }
@@ -247,6 +280,105 @@ bool extractRefPoint(const rj::Value& inter, double& lat, double& lon) {
     return false;
 }
 
+bool tryGetUint64(const rj::Value& value, uint64_t& out) {
+    if (value.IsUint64()) {
+        out = value.GetUint64();
+        return true;
+    }
+    if (value.IsUint()) {
+        out = value.GetUint();
+        return true;
+    }
+    if (value.IsInt64()) {
+        const auto raw = value.GetInt64();
+        if (raw >= 0) {
+            out = static_cast<uint64_t>(raw);
+            return true;
+        }
+    }
+    if (value.IsInt()) {
+        const auto raw = value.GetInt();
+        if (raw >= 0) {
+            out = static_cast<uint64_t>(raw);
+            return true;
+        }
+    }
+    if (value.IsDouble()) {
+        const auto raw = value.GetDouble();
+        if (raw >= 0.0) {
+            out = static_cast<uint64_t>(raw);
+            return true;
+        }
+    }
+    return false;
+}
+
+void parseBoolField(const rj::Value& obj, const char* key, bool& target) {
+    if (obj.HasMember(key) && obj[key].IsBool()) {
+        target = obj[key].GetBool();
+    }
+}
+
+void parseIntField(const rj::Value& obj, const char* key, int& target) {
+    if (obj.HasMember(key) && obj[key].IsInt()) {
+        target = obj[key].GetInt();
+    } else if (obj.HasMember(key) && obj[key].IsUint()) {
+        target = static_cast<int>(obj[key].GetUint());
+    }
+}
+
+void parseCpmFilter(const rj::Value& doc, QueryRequest& out) {
+    const rj::Value* filter_obj = nullptr;
+    if (doc.HasMember("cpm_filter") && doc["cpm_filter"].IsObject()) {
+        filter_obj = &doc["cpm_filter"];
+    } else if (doc.HasMember("cpmFilter") && doc["cpmFilter"].IsObject()) {
+        filter_obj = &doc["cpmFilter"];
+    }
+    if (!filter_obj) {
+        return;
+    }
+
+    out.has_cpm_filter = true;
+    parseBoolField(*filter_obj, "include_own", out.cpm_filter.include_own);
+    parseBoolField(*filter_obj, "includeOwn", out.cpm_filter.include_own);
+    parseBoolField(*filter_obj, "include_external", out.cpm_filter.include_external);
+    parseBoolField(*filter_obj, "includeExternal", out.cpm_filter.include_external);
+
+    parseIntField(*filter_obj, "max_object_age_ms", out.cpm_filter.max_object_age_ms);
+    parseIntField(*filter_obj, "maxObjectAgeMs", out.cpm_filter.max_object_age_ms);
+    parseIntField(*filter_obj, "max_sic_age_s", out.cpm_filter.max_sic_age_s);
+    parseIntField(*filter_obj, "maxSicAgeS", out.cpm_filter.max_sic_age_s);
+    parseIntField(*filter_obj,
+                  "max_perception_region_age_s",
+                  out.cpm_filter.max_perception_region_age_s);
+    parseIntField(*filter_obj,
+                  "maxPerceptionRegionAgeS",
+                  out.cpm_filter.max_perception_region_age_s);
+    parseIntField(*filter_obj, "limit_objects", out.cpm_filter.limit_objects);
+    parseIntField(*filter_obj, "limitObjects", out.cpm_filter.limit_objects);
+    parseIntField(*filter_obj, "limit_sensors", out.cpm_filter.limit_sensors);
+    parseIntField(*filter_obj, "limitSensors", out.cpm_filter.limit_sensors);
+    parseIntField(*filter_obj, "limit_regions", out.cpm_filter.limit_regions);
+    parseIntField(*filter_obj, "limitRegions", out.cpm_filter.limit_regions);
+
+    out.cpm_filter.station_ids.clear();
+    if (filter_obj->HasMember("station_ids") && (*filter_obj)["station_ids"].IsArray()) {
+        for (const auto& entry : (*filter_obj)["station_ids"].GetArray()) {
+            uint64_t station_id = 0;
+            if (tryGetUint64(entry, station_id) && station_id > 0) {
+                out.cpm_filter.station_ids.push_back(station_id);
+            }
+        }
+    } else if (filter_obj->HasMember("stationIds") && (*filter_obj)["stationIds"].IsArray()) {
+        for (const auto& entry : (*filter_obj)["stationIds"].GetArray()) {
+            uint64_t station_id = 0;
+            if (tryGetUint64(entry, station_id) && station_id > 0) {
+                out.cpm_filter.station_ids.push_back(station_id);
+            }
+        }
+    }
+}
+
 bool parseLegacyQuery(const std::string& payload, QueryRequest& out) {
     std::istringstream stream(payload);
     std::string token;
@@ -346,6 +478,14 @@ bool parseQueryRequest(const std::string& payload, QueryRequest& out) {
         out.mapem_filter = ldm::mapem::ParseFilter(doc);
         out.has_mapem_detail = true;
     }
+    parseCpmFilter(doc, out);
+    if (doc.HasMember("if_cpm_version")) {
+        uint64_t if_version = 0;
+        if (tryGetUint64(doc["if_cpm_version"], if_version)) {
+            out.if_cpm_version = if_version;
+            out.has_if_cpm_version = true;
+        }
+    }
     return true;
 }
 
@@ -366,6 +506,20 @@ int main() {
     ldm::model::LdmStore store(cfg.ldm_core.aom_radius_m);
     store.setStationReference(lat, lon);
 
+    ldm::cpm::CpmStateStore::Config cpm_store_cfg;
+    cpm_store_cfg.object_ttl_ms = cfg.ldm_core.object_ttl_ms;
+    cpm_store_cfg.sic_ttl_s = cfg.ldm_core.sic_ttl_s;
+    cpm_store_cfg.perception_region_ttl_s = cfg.ldm_core.perception_region_ttl_s;
+    cpm_store_cfg.max_objects_per_station = cfg.ldm_core.cpm_max_objects_per_station;
+    cpm_store_cfg.max_stations = cfg.ldm_core.cpm_max_stations;
+    ldm::cpm::CpmStateStore cpm_store(cpm_store_cfg);
+
+    bool cpm_ingest_enabled = cfg.ldm_core.cpm_ingest_enable;
+    if (cpm_ingest_enabled && cfg.ldm_core.local_station_id <= 0) {
+        cpm_ingest_enabled = false;
+        spdlog::warn("[LDM-Core] CPM ingest disabled because local_station_id is not configured");
+    }
+
     std::thread locator_update_thread;
     if (locator.isDynamic() && cfg.locator.update_interval_ms > 0) {
         const auto update_interval = std::chrono::milliseconds(std::max(250, cfg.locator.update_interval_ms));
@@ -381,17 +535,46 @@ int main() {
     std::unique_ptr<ldm::metrics::Metrics> metrics;
     ldm::metrics::Gauge* objects_gauge = nullptr;
     ldm::metrics::Counter* served_queries = nullptr;
+    ldm::metrics::Counter* cpm_ingested = nullptr;
+    ldm::metrics::Counter* cpm_dropped_missing_station = nullptr;
+    ldm::metrics::Gauge* cpm_version_gauge = nullptr;
+    ldm::metrics::Gauge* cpm_station_gauge = nullptr;
+    ldm::metrics::Gauge* cpm_object_gauge = nullptr;
     if (cfg.general.prometheus) {
         metrics = std::make_unique<ldm::metrics::Metrics>(cfg.general.prometheus_port);
         objects_gauge = &metrics->gauge("ldm_objects_total", "Current number of objects in the LDM");
         served_queries = &metrics->counter("ldm_core_queries_total", "Total queries served by LDM core");
+        cpm_ingested = &metrics->counter("ldm_cpm_ingested_total", "Total CPM messages ingested");
+        cpm_dropped_missing_station = &metrics->counter(
+            "ldm_cpm_dropped_missing_station_id_total",
+            "Total external CPM messages dropped due to missing sender station id");
+        cpm_version_gauge = &metrics->gauge("ldm_cpm_version", "Current CPM global version");
+        cpm_station_gauge = &metrics->gauge("ldm_cpm_station_count", "Current number of CPM stations");
+        cpm_object_gauge = &metrics->gauge("ldm_cpm_object_count", "Current number of CPM tracked objects");
     }
 
     auto transport = ldm::messaging::createTransport(cfg.messaging);
     auto* transport_ptr = transport.get();
     const auto ingest_topic = cfg.ldm_core.ingest_topic;
+    const auto update_topic = cfg.ldm_core.update_topic;
     const auto query_topic = cfg.ldm_core.query_topic;
     const auto response_topic = cfg.ldm_core.response_topic;
+
+    auto publish_cpm_update = [transport_ptr, update_topic, &cpm_store]() {
+        if (update_topic.empty()) {
+            return;
+        }
+        rj::Document update_doc;
+        update_doc.SetObject();
+        auto& alloc = update_doc.GetAllocator();
+        update_doc.AddMember("domain", "cpm", alloc);
+        update_doc.AddMember("cpm_version", cpm_store.version(), alloc);
+        update_doc.AddMember("timestamp", nowSeconds(), alloc);
+        rj::StringBuffer buffer;
+        rj::Writer<rj::StringBuffer> writer(buffer);
+        update_doc.Accept(writer);
+        transport_ptr->publish(update_topic, buffer.GetString());
+    };
 
     transport->subscribe(ingest_topic, [&, objects_gauge](const std::string& topic, const std::string& payload) {
         const auto update_payload = extractUpdatePayload(payload);
@@ -474,6 +657,61 @@ int main() {
         spdlog::debug("[LDM-Core] Ignored update on {} payload={}", topic, update_payload);
     });
 
+    if (cpm_ingest_enabled) {
+        auto handle_cpm = [&, publish_cpm_update](ldm::cpm::Scope scope,
+                                                  const std::string& topic,
+                                                  const std::string& payload) {
+            ldm::cpm::ParsedFrame frame;
+            ldm::cpm::ParseError err = ldm::cpm::ParseError::NONE;
+            if (!ldm::cpm::ParseCpmFrame(payload, scope, static_cast<uint64_t>(cfg.ldm_core.local_station_id), nowSeconds(),
+                                         frame, err)) {
+                if (err == ldm::cpm::ParseError::MISSING_STATION_ID) {
+                    if (cpm_dropped_missing_station) {
+                        cpm_dropped_missing_station->Increment();
+                    }
+                    spdlog::warn("[LDM-Core] Dropped CPM from {} due to missing sender station id",
+                                 topic);
+                    return;
+                }
+                spdlog::debug("[LDM-Core] Ignored non-CPM payload on {} (parse_err={})",
+                              topic,
+                              static_cast<int>(err));
+                return;
+            }
+
+            if (cpm_ingested) {
+                cpm_ingested->Increment();
+            }
+            const bool changed = cpm_store.ingest(frame);
+            if (cpm_version_gauge) {
+                cpm_version_gauge->Set(static_cast<double>(cpm_store.version()));
+            }
+            if (cpm_station_gauge) {
+                cpm_station_gauge->Set(static_cast<double>(cpm_store.stationCount()));
+            }
+            if (cpm_object_gauge) {
+                cpm_object_gauge->Set(static_cast<double>(cpm_store.objectCount()));
+            }
+            if (changed) {
+                publish_cpm_update();
+            }
+        };
+
+        transport->subscribe(cfg.ldm_core.cpm_topic_in, [handle_cpm](const std::string& topic, const std::string& payload) {
+            handle_cpm(ldm::cpm::Scope::OWN, topic, payload);
+        });
+        transport->subscribe(cfg.ldm_core.cpm_topic_out, [handle_cpm](const std::string& topic, const std::string& payload) {
+            handle_cpm(ldm::cpm::Scope::EXTERNAL, topic, payload);
+        });
+
+        spdlog::info("[LDM-Core] CPM ingest enabled on topics in='{}' out='{}' local_station_id={}",
+                     cfg.ldm_core.cpm_topic_in,
+                     cfg.ldm_core.cpm_topic_out,
+                     cfg.ldm_core.local_station_id);
+    } else {
+        spdlog::info("[LDM-Core] CPM ingest disabled");
+    }
+
     transport->subscribe(query_topic, [&, transport_ptr, response_topic, served_queries](const std::string& topic,
                                                                                        const std::string& payload) {
         if (served_queries) {
@@ -481,7 +719,16 @@ int main() {
         }
         QueryRequest request;
         parseQueryRequest(payload, request);
-        if (request.query_type != "vam") {
+        request.query_type = toLower(request.query_type);
+        if (request.query_type == "cpm" || request.query_type == "cpm_sensors") {
+            request.query_type = "cpm_state";
+        } else if (request.query_type == "cpm_regions") {
+            request.query_type = "cpm_perception_regions";
+        }
+        const bool cpm_query = (request.query_type == "cpm_state" ||
+                                request.query_type == "cpm_objects" ||
+                                request.query_type == "cpm_perception_regions");
+        if (request.query_type != "vam" && request.query_type != "mapem" && !cpm_query) {
             request.query_type = "mapem";
         }
 
@@ -502,7 +749,72 @@ int main() {
             response_doc.AddMember("request_id", request.request_id, alloc);
         }
 
-        if (request.query_type == "vam") {
+        if (cpm_query) {
+            ldm::cpm::QueryInput cpm_input;
+            cpm_input.query_type = request.query_type;
+            cpm_input.has_aoi = request.has_aoi;
+            cpm_input.aoi_lat = request.aoi_lat;
+            cpm_input.aoi_lon = request.aoi_lon;
+            cpm_input.aoi_radius_m = request.aoi_radius_m;
+            cpm_input.filter = request.cpm_filter;
+            cpm_input.has_if_cpm_version = request.has_if_cpm_version;
+            cpm_input.if_cpm_version = request.if_cpm_version;
+
+            const auto cpm_result = cpm_store.query(cpm_input, nowSeconds());
+            response_doc.AddMember("has_cpm", cpm_result.has_cpm, alloc);
+            response_doc.AddMember("cpm_version", cpm_result.cpm_version, alloc);
+            response_doc.AddMember("cpm_not_modified", cpm_result.cpm_not_modified, alloc);
+
+            rj::Value cpm_summary(rj::kObjectType);
+            cpm_summary.AddMember("station_count", cpm_result.station_count, alloc);
+            cpm_summary.AddMember("object_count", cpm_result.object_count, alloc);
+            cpm_summary.AddMember("sensor_count", cpm_result.sensor_count, alloc);
+            cpm_summary.AddMember("perception_region_count", cpm_result.perception_region_count, alloc);
+            response_doc.AddMember("cpm_summary", cpm_summary, alloc);
+
+            if (!cpm_result.cpm_not_modified) {
+                rj::Value cpm_state(rj::kArrayType);
+                for (const auto& station : cpm_result.stations) {
+                    rj::Value station_obj(rj::kObjectType);
+                    station_obj.AddMember("station_id", station.station_id, alloc);
+                    station_obj.AddMember("scope", rj::Value(station.scope.c_str(), alloc), alloc);
+                    station_obj.AddMember("last_cpm_timestamp_unix_s", station.last_cpm_timestamp_unix_s, alloc);
+
+                    if (station.sender_reference_position.has_position) {
+                        rj::Value ref_pos(rj::kObjectType);
+                        ref_pos.AddMember("latitude", station.sender_reference_position.latitude, alloc);
+                        ref_pos.AddMember("longitude", station.sender_reference_position.longitude, alloc);
+                        station_obj.AddMember("sender_reference_position", ref_pos, alloc);
+                    }
+
+                    auto append_json_array = [&](const std::vector<std::string>& source,
+                                                 const char* key) {
+                        rj::Value arr(rj::kArrayType);
+                        for (const auto& entry : source) {
+                            rj::Document parsed;
+                            parsed.Parse(entry.c_str());
+                            if (!parsed.HasParseError()) {
+                                arr.PushBack(rj::Value(parsed, alloc), alloc);
+                            } else {
+                                arr.PushBack(rj::Value(entry.c_str(), alloc), alloc);
+                            }
+                        }
+                        station_obj.AddMember(rj::StringRef(key), arr, alloc);
+                    };
+
+                    append_json_array(station.sensor_information, "sensor_information");
+                    append_json_array(station.perception_regions, "perception_regions");
+
+                    rj::Value objects(rj::kArrayType);
+                    for (const auto object_id : station.objects) {
+                        objects.PushBack(object_id, alloc);
+                    }
+                    station_obj.AddMember("objects", objects, alloc);
+                    cpm_state.PushBack(station_obj, alloc);
+                }
+                response_doc.AddMember("cpm_state", cpm_state, alloc);
+            }
+        } else if (request.query_type == "vam") {
             auto vams = store.queryByAreaAndFilter(aoi, [](const ldm::model::LdmDataObject& obj) {
                 return obj.type == ldm::model::LdmDataType::VAM;
             });
@@ -604,9 +916,39 @@ int main() {
         transport_ptr->publish(response_topic, buffer.GetString());
     });
 
+    const auto map_vam_maintenance_interval = 5s;
+    const auto cpm_sweeper_interval = std::chrono::milliseconds(std::max(100, cfg.ldm_core.cpm_sweeper_interval_ms));
+    auto last_map_vam_maintenance = std::chrono::steady_clock::now();
+    auto last_cpm_sweep = std::chrono::steady_clock::now();
+
     while (g_running.load()) {
-        store.runMaintenance();
-        std::this_thread::sleep_for(5s);
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_map_vam_maintenance >= map_vam_maintenance_interval) {
+            store.runMaintenance();
+            if (objects_gauge) {
+                objects_gauge->Set(static_cast<double>(store.size()));
+            }
+            last_map_vam_maintenance = now;
+        }
+
+        if (cpm_ingest_enabled && now - last_cpm_sweep >= cpm_sweeper_interval) {
+            const bool changed = cpm_store.sweep(nowSeconds());
+            if (cpm_version_gauge) {
+                cpm_version_gauge->Set(static_cast<double>(cpm_store.version()));
+            }
+            if (cpm_station_gauge) {
+                cpm_station_gauge->Set(static_cast<double>(cpm_store.stationCount()));
+            }
+            if (cpm_object_gauge) {
+                cpm_object_gauge->Set(static_cast<double>(cpm_store.objectCount()));
+            }
+            if (changed) {
+                publish_cpm_update();
+            }
+            last_cpm_sweep = now;
+        }
+
+        std::this_thread::sleep_for(200ms);
     }
     if (locator_update_thread.joinable()) {
         locator_update_thread.join();
