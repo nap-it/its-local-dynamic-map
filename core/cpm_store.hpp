@@ -29,8 +29,6 @@ struct QueryInput {
     double aoi_lon{0.0};
     double aoi_radius_m{0.0};
     CpmFilter filter{};
-    bool has_if_cpm_version{false};
-    uint64_t if_cpm_version{0};
 };
 
 struct StationSnapshot {
@@ -45,8 +43,6 @@ struct StationSnapshot {
 
 struct QueryResult {
     bool has_cpm{false};
-    bool cpm_not_modified{false};
-    uint64_t cpm_version{0};
     int station_count{0};
     int object_count{0};
     int sensor_count{0};
@@ -70,7 +66,6 @@ public:
     bool sweep(double now_unix_s);
     QueryResult query(const QueryInput& input, double now_unix_s) const;
 
-    uint64_t version() const;
     std::size_t stationCount() const;
     std::size_t objectCount() const;
 
@@ -98,19 +93,15 @@ private:
         double perception_regions_last_update_s{0.0};
 
         std::unordered_map<uint64_t, ObjectState> objects_by_id;
-        uint64_t state_version{0};
     };
 
     bool sweepLocked(double now_unix_s);
     bool passesAoi(const StationCpmState& station, const QueryInput& input) const;
-    void bumpVersion(StationCpmState& station);
     std::string hashEntries(const std::vector<std::string>& entries) const;
 
     Config config_;
     mutable std::mutex mutex_;
     std::unordered_map<uint64_t, StationCpmState> stations_;
-    uint64_t global_version_{0};
 };
 
 }  // namespace ldm::cpm
-

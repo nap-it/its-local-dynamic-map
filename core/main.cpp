@@ -84,8 +84,6 @@ struct QueryRequest {
     ldm::mapem::Filter mapem_filter{};
     bool has_cpm_filter{false};
     ldm::cpm::CpmFilter cpm_filter{};
-    bool has_if_cpm_version{false};
-    uint64_t if_cpm_version{0};
 };
 
 std::string readNonEmpty(const INIReader& reader,
@@ -479,13 +477,6 @@ bool parseQueryRequest(const std::string& payload, QueryRequest& out) {
         out.has_mapem_detail = true;
     }
     parseCpmFilter(doc, out);
-    if (doc.HasMember("if_cpm_version")) {
-        uint64_t if_version = 0;
-        if (tryGetUint64(doc["if_cpm_version"], if_version)) {
-            out.if_cpm_version = if_version;
-            out.has_if_cpm_version = true;
-        }
-    }
     return true;
 }
 
@@ -537,7 +528,6 @@ int main() {
     ldm::metrics::Counter* served_queries = nullptr;
     ldm::metrics::Counter* cpm_ingested = nullptr;
     ldm::metrics::Counter* cpm_dropped_missing_station = nullptr;
-    ldm::metrics::Gauge* cpm_version_gauge = nullptr;
     ldm::metrics::Gauge* cpm_station_gauge = nullptr;
     ldm::metrics::Gauge* cpm_object_gauge = nullptr;
     if (cfg.general.prometheus) {
@@ -548,7 +538,6 @@ int main() {
         cpm_dropped_missing_station = &metrics->counter(
             "ldm_cpm_dropped_missing_station_id_total",
             "Total external CPM messages dropped due to missing sender station id");
-        cpm_version_gauge = &metrics->gauge("ldm_cpm_version", "Current CPM global version");
         cpm_station_gauge = &metrics->gauge("ldm_cpm_station_count", "Current number of CPM stations");
         cpm_object_gauge = &metrics->gauge("ldm_cpm_object_count", "Current number of CPM tracked objects");
     }
@@ -568,7 +557,6 @@ int main() {
         update_doc.SetObject();
         auto& alloc = update_doc.GetAllocator();
         update_doc.AddMember("domain", "cpm", alloc);
-        update_doc.AddMember("cpm_version", cpm_store.version(), alloc);
         update_doc.AddMember("timestamp", nowSeconds(), alloc);
         rj::StringBuffer buffer;
         rj::Writer<rj::StringBuffer> writer(buffer);
@@ -683,9 +671,6 @@ int main() {
                 cpm_ingested->Increment();
             }
             const bool changed = cpm_store.ingest(frame);
-            if (cpm_version_gauge) {
-                cpm_version_gauge->Set(static_cast<double>(cpm_store.version()));
-            }
             if (cpm_station_gauge) {
                 cpm_station_gauge->Set(static_cast<double>(cpm_store.stationCount()));
             }
@@ -757,13 +742,9 @@ int main() {
             cpm_input.aoi_lon = request.aoi_lon;
             cpm_input.aoi_radius_m = request.aoi_radius_m;
             cpm_input.filter = request.cpm_filter;
-            cpm_input.has_if_cpm_version = request.has_if_cpm_version;
-            cpm_input.if_cpm_version = request.if_cpm_version;
 
             const auto cpm_result = cpm_store.query(cpm_input, nowSeconds());
             response_doc.AddMember("has_cpm", cpm_result.has_cpm, alloc);
-            response_doc.AddMember("cpm_version", cpm_result.cpm_version, alloc);
-            response_doc.AddMember("cpm_not_modified", cpm_result.cpm_not_modified, alloc);
 
             rj::Value cpm_summary(rj::kObjectType);
             cpm_summary.AddMember("station_count", cpm_result.station_count, alloc);
@@ -772,48 +753,46 @@ int main() {
             cpm_summary.AddMember("perception_region_count", cpm_result.perception_region_count, alloc);
             response_doc.AddMember("cpm_summary", cpm_summary, alloc);
 
-            if (!cpm_result.cpm_not_modified) {
-                rj::Value cpm_state(rj::kArrayType);
-                for (const auto& station : cpm_result.stations) {
-                    rj::Value station_obj(rj::kObjectType);
-                    station_obj.AddMember("station_id", station.station_id, alloc);
-                    station_obj.AddMember("scope", rj::Value(station.scope.c_str(), alloc), alloc);
-                    station_obj.AddMember("last_cpm_timestamp_unix_s", station.last_cpm_timestamp_unix_s, alloc);
+            rj::Value cpm_state(rj::kArrayType);
+            for (const auto& station : cpm_result.stations) {
+                rj::Value station_obj(rj::kObjectType);
+                station_obj.AddMember("station_id", station.station_id, alloc);
+                station_obj.AddMember("scope", rj::Value(station.scope.c_str(), alloc), alloc);
+                station_obj.AddMember("last_cpm_timestamp_unix_s", station.last_cpm_timestamp_unix_s, alloc);
 
-                    if (station.sender_reference_position.has_position) {
-                        rj::Value ref_pos(rj::kObjectType);
-                        ref_pos.AddMember("latitude", station.sender_reference_position.latitude, alloc);
-                        ref_pos.AddMember("longitude", station.sender_reference_position.longitude, alloc);
-                        station_obj.AddMember("sender_reference_position", ref_pos, alloc);
-                    }
-
-                    auto append_json_array = [&](const std::vector<std::string>& source,
-                                                 const char* key) {
-                        rj::Value arr(rj::kArrayType);
-                        for (const auto& entry : source) {
-                            rj::Document parsed;
-                            parsed.Parse(entry.c_str());
-                            if (!parsed.HasParseError()) {
-                                arr.PushBack(rj::Value(parsed, alloc), alloc);
-                            } else {
-                                arr.PushBack(rj::Value(entry.c_str(), alloc), alloc);
-                            }
-                        }
-                        station_obj.AddMember(rj::StringRef(key), arr, alloc);
-                    };
-
-                    append_json_array(station.sensor_information, "sensor_information");
-                    append_json_array(station.perception_regions, "perception_regions");
-
-                    rj::Value objects(rj::kArrayType);
-                    for (const auto object_id : station.objects) {
-                        objects.PushBack(object_id, alloc);
-                    }
-                    station_obj.AddMember("objects", objects, alloc);
-                    cpm_state.PushBack(station_obj, alloc);
+                if (station.sender_reference_position.has_position) {
+                    rj::Value ref_pos(rj::kObjectType);
+                    ref_pos.AddMember("latitude", station.sender_reference_position.latitude, alloc);
+                    ref_pos.AddMember("longitude", station.sender_reference_position.longitude, alloc);
+                    station_obj.AddMember("sender_reference_position", ref_pos, alloc);
                 }
-                response_doc.AddMember("cpm_state", cpm_state, alloc);
+
+                auto append_json_array = [&](const std::vector<std::string>& source,
+                                             const char* key) {
+                    rj::Value arr(rj::kArrayType);
+                    for (const auto& entry : source) {
+                        rj::Document parsed;
+                        parsed.Parse(entry.c_str());
+                        if (!parsed.HasParseError()) {
+                            arr.PushBack(rj::Value(parsed, alloc), alloc);
+                        } else {
+                            arr.PushBack(rj::Value(entry.c_str(), alloc), alloc);
+                        }
+                    }
+                    station_obj.AddMember(rj::StringRef(key), arr, alloc);
+                };
+
+                append_json_array(station.sensor_information, "sensor_information");
+                append_json_array(station.perception_regions, "perception_regions");
+
+                rj::Value objects(rj::kArrayType);
+                for (const auto object_id : station.objects) {
+                    objects.PushBack(object_id, alloc);
+                }
+                station_obj.AddMember("objects", objects, alloc);
+                cpm_state.PushBack(station_obj, alloc);
             }
+            response_doc.AddMember("cpm_state", cpm_state, alloc);
         } else if (request.query_type == "vam") {
             auto vams = store.queryByAreaAndFilter(aoi, [](const ldm::model::LdmDataObject& obj) {
                 return obj.type == ldm::model::LdmDataType::VAM;
@@ -933,9 +912,6 @@ int main() {
 
         if (cpm_ingest_enabled && now - last_cpm_sweep >= cpm_sweeper_interval) {
             const bool changed = cpm_store.sweep(nowSeconds());
-            if (cpm_version_gauge) {
-                cpm_version_gauge->Set(static_cast<double>(cpm_store.version()));
-            }
             if (cpm_station_gauge) {
                 cpm_station_gauge->Set(static_cast<double>(cpm_store.stationCount()));
             }

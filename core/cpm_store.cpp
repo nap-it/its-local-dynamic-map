@@ -33,11 +33,6 @@ namespace ldm::cpm {
 
 CpmStateStore::CpmStateStore(const Config& config) : config_(config) {}
 
-void CpmStateStore::bumpVersion(StationCpmState& station) {
-    ++station.state_version;
-    ++global_version_;
-}
-
 std::string CpmStateStore::hashEntries(const std::vector<std::string>& entries) const {
     // FNV-1a hash over canonical serialized entries.
     uint64_t hash = 1469598103934665603ULL;
@@ -70,7 +65,6 @@ bool CpmStateStore::ingest(const ParsedFrame& frame) {
                 }
             }
             stations_.erase(oldest);
-            ++global_version_;
         }
         StationCpmState inserted;
         inserted.station_id = frame.station_id;
@@ -161,9 +155,6 @@ bool CpmStateStore::ingest(const ParsedFrame& frame) {
         }
     }
 
-    if (changed) {
-        bumpVersion(station);
-    }
     return changed;
 }
 
@@ -225,7 +216,6 @@ bool CpmStateStore::sweepLocked(double now_unix_s) {
         }
 
         if (station_changed) {
-            bumpVersion(station);
             changed = true;
         }
     }
@@ -241,11 +231,6 @@ QueryResult CpmStateStore::query(const QueryInput& input, double now_unix_s) con
     std::lock_guard<std::mutex> lock(mutex_);
 
     QueryResult result;
-    result.cpm_version = global_version_;
-
-    if (input.has_if_cpm_version && input.if_cpm_version == global_version_) {
-        result.cpm_not_modified = true;
-    }
 
     const bool want_objects = (input.query_type == "cpm_state" || input.query_type == "cpm_objects");
     const bool want_regions = (input.query_type == "cpm_state" || input.query_type == "cpm_perception_regions");
@@ -339,26 +324,19 @@ QueryResult CpmStateStore::query(const QueryInput& input, double now_unix_s) con
         result.sensor_count += static_cast<int>(sensors.size());
         result.perception_region_count += static_cast<int>(regions.size());
 
-        if (!result.cpm_not_modified) {
-            StationSnapshot snapshot;
-            snapshot.station_id = station.station_id;
-            snapshot.scope = ScopeToString(station.scope);
-            snapshot.last_cpm_timestamp_unix_s = station.last_cpm_timestamp_unix_s;
-            snapshot.sender_reference_position = station.last_reference_position;
-            snapshot.sensor_information = std::move(sensors);
-            snapshot.perception_regions = std::move(regions);
-            snapshot.objects = std::move(objects);
-            result.stations.push_back(std::move(snapshot));
-        }
+        StationSnapshot snapshot;
+        snapshot.station_id = station.station_id;
+        snapshot.scope = ScopeToString(station.scope);
+        snapshot.last_cpm_timestamp_unix_s = station.last_cpm_timestamp_unix_s;
+        snapshot.sender_reference_position = station.last_reference_position;
+        snapshot.sensor_information = std::move(sensors);
+        snapshot.perception_regions = std::move(regions);
+        snapshot.objects = std::move(objects);
+        result.stations.push_back(std::move(snapshot));
     }
 
     result.has_cpm = result.station_count > 0;
     return result;
-}
-
-uint64_t CpmStateStore::version() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return global_version_;
 }
 
 std::size_t CpmStateStore::stationCount() const {

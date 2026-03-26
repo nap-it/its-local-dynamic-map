@@ -189,9 +189,8 @@ CPM query filter keys:
 - `include_own`, `include_external`
 - `max_object_age_ms`, `max_sic_age_s`, `max_perception_region_age_s`
 - `station_ids`, `limit_objects`, `limit_sensors`, `limit_regions`
-- optional `if_cpm_version` fast-path token
 
-CPM responses include `has_cpm`, `cpm_version`, `cpm_not_modified`, `cpm_summary`, and `cpm_state` (when modified). `cpm_state[].objects` contains object IDs only.
+CPM responses include `has_cpm`, `cpm_summary`, and `cpm_state`. `cpm_state[].objects` contains object IDs only.
 
 ## TODOs
 
