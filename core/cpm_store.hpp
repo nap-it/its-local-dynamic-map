@@ -33,8 +33,10 @@ struct QueryInput {
 
 struct StationSnapshot {
     uint64_t station_id{0};
+    int station_type{0};
     std::string scope;
     double last_cpm_timestamp_unix_s{0.0};
+    double observed_cpm_rate_hz{1.0};
     ReferencePosition sender_reference_position;
     std::vector<std::string> sensor_information;
     std::vector<std::string> perception_regions;
@@ -80,8 +82,11 @@ private:
 
     struct StationCpmState {
         uint64_t station_id{0};
+        int station_type{0};
         Scope scope{Scope::EXTERNAL};
         double last_cpm_timestamp_unix_s{0.0};
+        double last_receive_timestamp_unix_s{0.0};
+        double observed_cpm_rate_hz{1.0};
         ReferencePosition last_reference_position;
 
         std::vector<std::string> sic_payload;

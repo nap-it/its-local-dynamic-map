@@ -757,8 +757,10 @@ int main() {
             for (const auto& station : cpm_result.stations) {
                 rj::Value station_obj(rj::kObjectType);
                 station_obj.AddMember("station_id", station.station_id, alloc);
+                station_obj.AddMember("station_type", station.station_type, alloc);
                 station_obj.AddMember("scope", rj::Value(station.scope.c_str(), alloc), alloc);
                 station_obj.AddMember("last_cpm_timestamp_unix_s", station.last_cpm_timestamp_unix_s, alloc);
+                station_obj.AddMember("observed_cpm_rate_hz", station.observed_cpm_rate_hz, alloc);
 
                 if (station.sender_reference_position.has_position) {
                     rj::Value ref_pos(rj::kObjectType);

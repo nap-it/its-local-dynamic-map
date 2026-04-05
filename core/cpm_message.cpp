@@ -143,6 +143,35 @@ bool extractExternalStationId(const rj::Value& root, uint64_t& station_id) {
     return false;
 }
 
+bool readStationType(const rj::Value& obj, int& station_type) {
+    if (!obj.IsObject()) {
+        return false;
+    }
+    if (obj.HasMember("stationType") && tryGetInt(obj["stationType"], station_type)) {
+        return true;
+    }
+    if (obj.HasMember("station_type") && tryGetInt(obj["station_type"], station_type)) {
+        return true;
+    }
+    return false;
+}
+
+bool extractStationType(const rj::Value& root, int& station_type) {
+    if (readStationType(root, station_type)) {
+        return true;
+    }
+    if (root.HasMember("header") && readStationType(root["header"], station_type)) {
+        return true;
+    }
+    if (root.HasMember("fields") && root["fields"].IsObject()) {
+        const auto& fields = root["fields"];
+        if (fields.HasMember("header") && readStationType(fields["header"], station_type)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 double extractTimestamp(const rj::Value& root, double fallback_now_s) {
     if (root.HasMember("timestamp") && root["timestamp"].IsNumber()) {
         return root["timestamp"].GetDouble();
@@ -182,6 +211,39 @@ const rj::Value* findCpmPayload(const rj::Value& root) {
         }
     }
     return nullptr;
+}
+
+int inferStationTypeFromContainers(const rj::Value& payload_obj) {
+    if (!payload_obj.IsObject() || !payload_obj.HasMember("cpmContainers") || !payload_obj["cpmContainers"].IsArray()) {
+        return 0;
+    }
+
+    bool has_container_1 = false;
+    bool has_container_2 = false;
+    for (const auto& container : payload_obj["cpmContainers"].GetArray()) {
+        if (!container.IsObject() || !container.HasMember("containerId")) {
+            continue;
+        }
+        int container_id = -1;
+        if (!tryGetInt(container["containerId"], container_id)) {
+            continue;
+        }
+        if (container_id == 2) {
+            has_container_2 = true;
+            break;
+        }
+        if (container_id == 1) {
+            has_container_1 = true;
+        }
+    }
+
+    if (has_container_2) {
+        return 15;
+    }
+    if (has_container_1) {
+        return 1;
+    }
+    return 0;
 }
 
 bool parseReferencePosition(const rj::Value& payload_obj, ldm::cpm::ReferencePosition& out) {
@@ -406,6 +468,7 @@ bool ParseCpmFrame(const std::string& payload,
 
     out.scope = scope;
     out.timestamp_unix_s = extractTimestamp(doc, now_unix_s);
+    out.receive_timestamp_unix_s = now_unix_s;
 
     if (scope == Scope::OWN) {
         out.station_id = local_station_id;
@@ -420,6 +483,10 @@ bool ParseCpmFrame(const std::string& payload,
     if (!cpm_payload || !cpm_payload->IsObject()) {
         err = ParseError::MISSING_CPM_PAYLOAD;
         return false;
+    }
+
+    if (!extractStationType(doc, out.station_type)) {
+        out.station_type = inferStationTypeFromContainers(*cpm_payload);
     }
 
     parseReferencePosition(*cpm_payload, out.reference_position);

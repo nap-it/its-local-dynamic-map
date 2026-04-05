@@ -27,8 +27,10 @@ struct ParsedObject {
 
 struct ParsedFrame {
     uint64_t station_id{0};
+    int station_type{0};
     Scope scope{Scope::EXTERNAL};
     double timestamp_unix_s{0.0};
+    double receive_timestamp_unix_s{0.0};
     ReferencePosition reference_position;
 
     bool has_sic{false};
@@ -58,4 +60,3 @@ bool ParseCpmFrame(const std::string& payload,
 const char* ScopeToString(Scope scope);
 
 }  // namespace ldm::cpm
-

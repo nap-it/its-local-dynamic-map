@@ -8,6 +8,7 @@
 namespace {
 
 constexpr double kEarthRadiusMeters = 6378137.0;
+constexpr double kCadenceEwmaAlpha = 0.35;
 
 inline double deg2rad(double deg) {
     return deg * M_PI / 180.0;
@@ -54,6 +55,8 @@ bool CpmStateStore::ingest(const ParsedFrame& frame) {
 
     std::lock_guard<std::mutex> lock(mutex_);
     const double update_ts = frame.timestamp_unix_s > 0.0 ? frame.timestamp_unix_s : 0.0;
+    const double receive_ts =
+        frame.receive_timestamp_unix_s > 0.0 ? frame.receive_timestamp_unix_s : update_ts;
 
     auto station_it = stations_.find(frame.station_id);
     if (station_it == stations_.end()) {
@@ -79,6 +82,22 @@ bool CpmStateStore::ingest(const ParsedFrame& frame) {
         station.scope = frame.scope;
         changed = true;
     }
+
+    if (station.station_type != frame.station_type) {
+        station.station_type = frame.station_type;
+        changed = true;
+    }
+
+    if (station.last_receive_timestamp_unix_s > 0.0 && receive_ts > station.last_receive_timestamp_unix_s) {
+        const double delta_s = receive_ts - station.last_receive_timestamp_unix_s;
+        if (delta_s > 0.0) {
+            const double instant_rate_hz = std::min(10.0, 1.0 / delta_s);
+            station.observed_cpm_rate_hz =
+                (kCadenceEwmaAlpha * instant_rate_hz) +
+                ((1.0 - kCadenceEwmaAlpha) * station.observed_cpm_rate_hz);
+        }
+    }
+    station.last_receive_timestamp_unix_s = receive_ts;
 
     station.last_cpm_timestamp_unix_s = update_ts;
     if (frame.reference_position.has_position) {
@@ -326,8 +345,10 @@ QueryResult CpmStateStore::query(const QueryInput& input, double now_unix_s) con
 
         StationSnapshot snapshot;
         snapshot.station_id = station.station_id;
+        snapshot.station_type = station.station_type;
         snapshot.scope = ScopeToString(station.scope);
         snapshot.last_cpm_timestamp_unix_s = station.last_cpm_timestamp_unix_s;
+        snapshot.observed_cpm_rate_hz = station.observed_cpm_rate_hz;
         snapshot.sender_reference_position = station.last_reference_position;
         snapshot.sensor_information = std::move(sensors);
         snapshot.perception_regions = std::move(regions);
