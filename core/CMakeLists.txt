@@ -1,7 +1,6 @@
 add_executable(core
     main.cpp
     cpm_message.cpp
-    cpm_store.cpp
     locator.cpp
     mapem_message.cpp
     vam_message.cpp

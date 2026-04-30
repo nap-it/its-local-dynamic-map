@@ -165,7 +165,7 @@ IngestionConfigBundle readConfig(const std::string& path) {
     cfg.mapem.mqtt_topic = readNonEmpty(reader, "mapem", "mqtt_topic", "vanetza/out/mapem");
     cfg.mapem.domain_id = reader.GetInteger("mapem", "domain_id", cfg.messaging.domain_id);
     cfg.mapem.dds_topic = readNonEmpty(reader, "mapem", "dds_topic", "vanetza/out/mapem");
-    cfg.mapem.output_topics = splitTopics(readNonEmpty(reader, "mapem", "output_topics", "ldm/updates"));
+    cfg.mapem.output_topics = splitTopics(readNonEmpty(reader, "mapem", "output_topics", "ldm/ingest"));
     cfg.mapem.simulation_interval_ms = reader.GetInteger("mapem", "simulation_interval_ms", 2000);
     cfg.mapem.file_path = reader.Get("mapem", "file_path", "");
 
@@ -178,7 +178,7 @@ IngestionConfigBundle readConfig(const std::string& path) {
     cfg.vam.mqtt_topic = readNonEmpty(reader, "vam", "mqtt_topic", "vanetza/out/vam");
     cfg.vam.domain_id = reader.GetInteger("vam", "domain_id", cfg.messaging.domain_id);
     cfg.vam.dds_topic = readNonEmpty(reader, "vam", "dds_topic", "vanetza/out/vam");
-    cfg.vam.output_topics = splitTopics(readNonEmpty(reader, "vam", "output_topics", "ldm/updates"));
+    cfg.vam.output_topics = splitTopics(readNonEmpty(reader, "vam", "output_topics", "ldm/ingest"));
     cfg.vam.simulation_interval_ms = reader.GetInteger("vam", "simulation_interval_ms", 2000);
     cfg.vam.file_path = reader.Get("vam", "file_path", "");
 
@@ -198,7 +198,6 @@ void publishUpdate(const CategoryConfig& cfg,
                    const std::string& payload,
                    const std::string& source_topic,
                    ldm::messaging::Transport* transport,
-                   int station_id,
                    ldm::metrics::Counter* received_counter,
                    ldm::metrics::Counter* forwarded_counter) {
     if (received_counter) {
@@ -209,13 +208,9 @@ void publishUpdate(const CategoryConfig& cfg,
         return;
     }
 
-    std::ostringstream enriched;
-    enriched << "ldm.update=" << payload << ";station=" << station_id;
-    const auto message = enriched.str();
-
     for (const auto& output_topic : cfg.output_topics) {
         spdlog::debug("[LDM-Ingestion] {} payload on {} -> {}", cfg.label, source_topic, output_topic);
-        transport->publish(output_topic, message);
+        transport->publish(output_topic, payload);
         if (forwarded_counter) {
             forwarded_counter->Increment();
         }
@@ -245,12 +240,9 @@ void runSimulation(const CategoryConfig& cfg,
             spdlog::debug("[LDM-Ingestion] Simulating {} seq={}", cfg.label, sequence);
         }
 
-        std::ostringstream enriched;
-        enriched << "ldm.update=" << payload << ";station=" << station_id;
-        const auto message = enriched.str();
         for (const auto& output_topic : cfg.output_topics) {
-            transport->publish(output_topic, message);
-            spdlog::debug("[LDM-Ingestion] Published simulated {} update to {}", cfg.label, output_topic);
+            transport->publish(output_topic, payload);
+            spdlog::debug("[LDM-Ingestion] Published simulated {} payload to {}", cfg.label, output_topic);
             if (forwarded_counter) {
                 forwarded_counter->Increment();
             }
@@ -308,10 +300,10 @@ void configureInput(CategoryState& category,
     category.input_transport = ldm::messaging::createTransport(input_cfg);
     auto* input_ptr = category.input_transport.get();
     CategoryState* category_ptr = &category;
-    input_ptr->subscribe(topic, [category_ptr, output_transport, &cfg, forwarded_counter](
+    input_ptr->subscribe(topic, [category_ptr, output_transport, forwarded_counter](
                                       const std::string& source_topic, const std::string& payload) {
         publishUpdate(category_ptr->config, payload, source_topic, output_transport,
-                      cfg.ingestion.station_id, category_ptr->received_counter, forwarded_counter);
+                      category_ptr->received_counter, forwarded_counter);
     });
 }
 
@@ -331,7 +323,7 @@ int main() {
         metrics = std::make_unique<ldm::metrics::Metrics>(cfg.general.prometheus_port);
         mapem_counter = &metrics->counter("ldm_ingestion_mapem_total", "Total MAPEM messages ingested");
         vam_counter = &metrics->counter("ldm_ingestion_vam_total", "Total VAM messages ingested");
-        forwarded_counter = &metrics->counter("ldm_ingestion_updates_total", "Total LDM updates published");
+        forwarded_counter = &metrics->counter("ldm_ingestion_forwarded_total", "Total LDM ingest payloads forwarded");
     }
 
     auto transport = ldm::messaging::createTransport(cfg.messaging);

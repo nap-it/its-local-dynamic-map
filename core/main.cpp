@@ -15,7 +15,6 @@
 
 #include "config_reader.hpp"
 #include "cpm_message.hpp"
-#include "cpm_store.hpp"
 #include "locator.hpp"
 #include "mapem_message.hpp"
 #include "metrics.hpp"
@@ -48,7 +47,7 @@ struct CoreConfig {
     double aom_radius_m{1000.0};
     int map_validity_seconds{3600};
     int vam_validity_seconds{5};
-    std::string ingest_topic{"ldm/updates"};
+    std::string ingest_topic{"ldm/ingest"};
     std::string update_topic{"ldm/updates"};
     std::string query_topic{"ldm/query"};
     std::string response_topic{"ldm/response"};
@@ -183,20 +182,6 @@ std::string toLower(std::string value) {
         return static_cast<char>(std::tolower(c));
     });
     return value;
-}
-
-std::string extractUpdatePayload(const std::string& message) {
-    const std::string marker = "ldm.update=";
-    auto pos = message.find(marker);
-    if (pos == std::string::npos) {
-        return trim(message);
-    }
-    auto start = pos + marker.size();
-    auto end = message.find(";station=", start);
-    if (end == std::string::npos) {
-        return trim(message.substr(start));
-    }
-    return trim(message.substr(start, end - start));
 }
 
 double nowSeconds() {
@@ -494,16 +479,15 @@ int main() {
     locator.run();
     auto [lat, lon] = locator.currentPosition();
 
-    ldm::model::LdmStore store(cfg.ldm_core.aom_radius_m);
-    store.setStationReference(lat, lon);
+    ldm::model::LdmStore::CpmConfig cpm_config;
+    cpm_config.object_ttl_ms = cfg.ldm_core.object_ttl_ms;
+    cpm_config.sic_ttl_s = cfg.ldm_core.sic_ttl_s;
+    cpm_config.perception_region_ttl_s = cfg.ldm_core.perception_region_ttl_s;
+    cpm_config.max_objects_per_station = cfg.ldm_core.cpm_max_objects_per_station;
+    cpm_config.max_stations = cfg.ldm_core.cpm_max_stations;
 
-    ldm::cpm::CpmStateStore::Config cpm_store_cfg;
-    cpm_store_cfg.object_ttl_ms = cfg.ldm_core.object_ttl_ms;
-    cpm_store_cfg.sic_ttl_s = cfg.ldm_core.sic_ttl_s;
-    cpm_store_cfg.perception_region_ttl_s = cfg.ldm_core.perception_region_ttl_s;
-    cpm_store_cfg.max_objects_per_station = cfg.ldm_core.cpm_max_objects_per_station;
-    cpm_store_cfg.max_stations = cfg.ldm_core.cpm_max_stations;
-    ldm::cpm::CpmStateStore cpm_store(cpm_store_cfg);
+    ldm::model::LdmStore store(cfg.ldm_core.aom_radius_m, cpm_config);
+    store.setStationReference(lat, lon);
 
     bool cpm_ingest_enabled = cfg.ldm_core.cpm_ingest_enable;
     if (cpm_ingest_enabled && cfg.ldm_core.local_station_id <= 0) {
@@ -549,25 +533,46 @@ int main() {
     const auto query_topic = cfg.ldm_core.query_topic;
     const auto response_topic = cfg.ldm_core.response_topic;
 
-    auto publish_cpm_update = [transport_ptr, update_topic, &cpm_store]() {
+    auto publish_update_event = [transport_ptr, update_topic](const char* domain,
+                                                              int station_count,
+                                                              int object_count,
+                                                              int sensor_count,
+                                                              int perception_region_count) {
         if (update_topic.empty()) {
             return;
         }
         rj::Document update_doc;
         update_doc.SetObject();
         auto& alloc = update_doc.GetAllocator();
-        update_doc.AddMember("domain", "cpm", alloc);
+        update_doc.AddMember("domain", rj::Value(domain, alloc), alloc);
+        update_doc.AddMember("event", "state_changed", alloc);
         update_doc.AddMember("timestamp", nowSeconds(), alloc);
+
+        rj::Value stats(rj::kObjectType);
+        stats.AddMember("station_count", station_count, alloc);
+        stats.AddMember("object_count", object_count, alloc);
+        stats.AddMember("sensor_count", sensor_count, alloc);
+        stats.AddMember("perception_region_count", perception_region_count, alloc);
+        update_doc.AddMember("stats", stats, alloc);
+
         rj::StringBuffer buffer;
         rj::Writer<rj::StringBuffer> writer(buffer);
         update_doc.Accept(writer);
         transport_ptr->publish(update_topic, buffer.GetString());
     };
 
+    auto publish_cpm_update = [&store, publish_update_event]() {
+        publish_update_event("cpm",
+                             static_cast<int>(store.cpmStationCount()),
+                             static_cast<int>(store.cpmObjectCount()),
+                             static_cast<int>(store.cpmSensorCount()),
+                             static_cast<int>(store.cpmPerceptionRegionCount()));
+    };
+
     transport->subscribe(ingest_topic, [&, objects_gauge](const std::string& topic, const std::string& payload) {
-        const auto update_payload = extractUpdatePayload(payload);
+        const auto& ingest_payload = payload;
         std::string mapem_json;
-        if (ldm::mapem::ExtractNormalizedMapem(update_payload, mapem_json)) {
+        if (ldm::mapem::ExtractNormalizedMapem(ingest_payload, mapem_json)) {
             rj::Document mapem_doc;
             mapem_doc.Parse(mapem_json.c_str());
             if (mapem_doc.HasParseError() || !mapem_doc.IsObject()) {
@@ -575,11 +580,12 @@ int main() {
                 return;
             }
             double timestamp_s = 0.0;
-            bool has_ts = parseTimestampSeconds(update_payload, timestamp_s);
+            bool has_ts = parseTimestampSeconds(ingest_payload, timestamp_s);
             auto timestamp = (has_ts && timestamp_s > 0.0) ? timePointFromSeconds(timestamp_s)
                                                            : std::chrono::system_clock::now();
             const auto validity = std::chrono::seconds(std::max(0, cfg.ldm_core.map_validity_seconds));
             int stored = 0;
+            bool changed = false;
             if (mapem_doc.HasMember("intersections") && mapem_doc["intersections"].IsArray()) {
                 for (const auto& inter : mapem_doc["intersections"].GetArray()) {
                     if (!inter.IsObject()) {
@@ -603,19 +609,24 @@ int main() {
                     obj.timestamp = timestamp;
                     obj.time_validity = validity;
                     obj.payload = toJsonString(inter);
-                    store.upsertObject(obj);
-                    ++stored;
+                    if (store.upsertObject(obj)) {
+                        ++stored;
+                        changed = true;
+                    }
                 }
             }
             if (objects_gauge) {
                 objects_gauge->Set(static_cast<double>(store.size()));
+            }
+            if (changed) {
+                publish_update_event("mapem", 0, static_cast<int>(store.mapemCount()), 0, 0);
             }
             spdlog::debug("[LDM-Core] Stored MAPEM update intersections={} payload_bytes={}", stored, mapem_json.size());
             return;
         }
 
         ldm::vam::VamSummary summary;
-        if (ldm::vam::ExtractVamSummary(update_payload, summary)) {
+        if (ldm::vam::ExtractVamSummary(ingest_payload, summary)) {
             auto timestamp = summary.timestamp_s > 0.0 ? timePointFromSeconds(summary.timestamp_s)
                                                        : std::chrono::system_clock::now();
             ldm::model::LdmDataObject obj;
@@ -626,7 +637,7 @@ int main() {
             obj.geom.lons = {summary.lon};
             obj.timestamp = timestamp;
             obj.time_validity = std::chrono::seconds(std::max(0, cfg.ldm_core.vam_validity_seconds));
-            obj.payload = update_payload;
+            obj.payload = ingest_payload;
             if (summary.has_orientation) {
                 auto attrs = std::make_shared<rj::Document>();
                 attrs->SetObject();
@@ -634,15 +645,18 @@ int main() {
                 attrs->AddMember("orientation", summary.orientation, alloc);
                 obj.attributes = attrs;
             }
-            store.upsertObject(obj);
+            const bool changed = store.upsertObject(obj);
             if (objects_gauge) {
                 objects_gauge->Set(static_cast<double>(store.size()));
+            }
+            if (changed) {
+                publish_update_event("vam", 0, static_cast<int>(store.vamCount()), 0, 0);
             }
             spdlog::debug("[LDM-Core] Stored VAM update station_id={}", summary.station_id);
             return;
         }
 
-        spdlog::debug("[LDM-Core] Ignored update on {} payload={}", topic, update_payload);
+        spdlog::debug("[LDM-Core] Ignored ingest payload on {} payload={}", topic, ingest_payload);
     });
 
     if (cpm_ingest_enabled) {
@@ -670,12 +684,12 @@ int main() {
             if (cpm_ingested) {
                 cpm_ingested->Increment();
             }
-            const bool changed = cpm_store.ingest(frame);
+            const bool changed = store.ingestCpm(frame);
             if (cpm_station_gauge) {
-                cpm_station_gauge->Set(static_cast<double>(cpm_store.stationCount()));
+                cpm_station_gauge->Set(static_cast<double>(store.cpmStationCount()));
             }
             if (cpm_object_gauge) {
-                cpm_object_gauge->Set(static_cast<double>(cpm_store.objectCount()));
+                cpm_object_gauge->Set(static_cast<double>(store.cpmObjectCount()));
             }
             if (changed) {
                 publish_cpm_update();
@@ -743,7 +757,7 @@ int main() {
             cpm_input.aoi_radius_m = request.aoi_radius_m;
             cpm_input.filter = request.cpm_filter;
 
-            const auto cpm_result = cpm_store.query(cpm_input, nowSeconds());
+            const auto cpm_result = store.queryCpm(cpm_input, nowSeconds());
             response_doc.AddMember("has_cpm", cpm_result.has_cpm, alloc);
 
             rj::Value cpm_summary(rj::kObjectType);
@@ -905,20 +919,28 @@ int main() {
     while (g_running.load()) {
         const auto now = std::chrono::steady_clock::now();
         if (now - last_map_vam_maintenance >= map_vam_maintenance_interval) {
-            store.runMaintenance();
+            const auto maintenance = store.runMaintenance();
             if (objects_gauge) {
                 objects_gauge->Set(static_cast<double>(store.size()));
+            }
+            if (maintenance.changed) {
+                if (maintenance.mapem_changed) {
+                    publish_update_event("mapem", 0, static_cast<int>(maintenance.mapem_count), 0, 0);
+                }
+                if (maintenance.vam_changed) {
+                    publish_update_event("vam", 0, static_cast<int>(maintenance.vam_count), 0, 0);
+                }
             }
             last_map_vam_maintenance = now;
         }
 
         if (cpm_ingest_enabled && now - last_cpm_sweep >= cpm_sweeper_interval) {
-            const bool changed = cpm_store.sweep(nowSeconds());
+            const bool changed = store.sweepCpm(nowSeconds());
             if (cpm_station_gauge) {
-                cpm_station_gauge->Set(static_cast<double>(cpm_store.stationCount()));
+                cpm_station_gauge->Set(static_cast<double>(store.cpmStationCount()));
             }
             if (cpm_object_gauge) {
-                cpm_object_gauge->Set(static_cast<double>(cpm_store.objectCount()));
+                cpm_object_gauge->Set(static_cast<double>(store.cpmObjectCount()));
             }
             if (changed) {
                 publish_cpm_update();
