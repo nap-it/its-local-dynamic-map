@@ -11,20 +11,21 @@
 
 namespace ldm::model {
 
-struct LdmDataObjectId {
-    uint64_t station_id{0};
-    uint64_t local_id{0};
-
-    bool operator==(const LdmDataObjectId& other) const {
-        return station_id == other.station_id && local_id == other.local_id;
-    }
-};
-
 enum class LdmDataType {
     MAP_INTERSECTION,
     MAP_LANE,
     MAP_SPEED_LIMIT,
     MAP_SIGNAL_GROUP,
+    VAM,
+};
+
+struct LdmDataObjectId {
+    LdmDataType type{LdmDataType::MAP_INTERSECTION};
+    uint64_t object_id{0};
+
+    bool operator==(const LdmDataObjectId& other) const {
+        return type == other.type && object_id == other.object_id;
+    }
 };
 
 struct Geometry {
@@ -34,6 +35,7 @@ struct Geometry {
     std::vector<double> lons;
     std::vector<double> xs;
     std::vector<double> ys;
+    double radius_m{0.0};
 };
 
 struct LdmDataObject {
@@ -44,6 +46,7 @@ struct LdmDataObject {
     std::chrono::milliseconds time_validity{std::chrono::milliseconds(0)};
     double max_distance_from_station_m{0.0};
     std::shared_ptr<rapidjson::Document> attributes;  // shared to avoid deep copies
+    std::string payload;
     uint32_t source_station_id{0};
 };
 
@@ -72,7 +75,7 @@ namespace std {
 template <>
 struct hash<ldm::model::LdmDataObjectId> {
     std::size_t operator()(const ldm::model::LdmDataObjectId& id) const noexcept {
-        return (std::hash<uint64_t>{}(id.station_id) << 1) ^ std::hash<uint64_t>{}(id.local_id);
+        return (static_cast<std::size_t>(id.type) << 1) ^ std::hash<uint64_t>{}(id.object_id);
     }
 };
 }  // namespace std

@@ -7,8 +7,6 @@
 #include "mqtt_transport.hpp"
 #include "zenoh_transport.hpp"
 
-#include "../config/config.hpp"
-
 namespace ldm::messaging {
 
 namespace {
@@ -22,7 +20,7 @@ std::string toLower(std::string value) {
 
 }  // namespace
 
-std::unique_ptr<Transport> createTransport(const config::MessagingConfig& cfg) {
+std::unique_ptr<Transport> createTransport(const MessagingConfig& cfg) {
     auto backend = toLower(cfg.backend);
     if (backend == "mqtt") {
         return std::make_unique<MqttTransport>(cfg);

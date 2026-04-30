@@ -10,13 +10,12 @@
 #include <zenoh.hxx>
 
 #include "transport.hpp"
-#include "../config/config.hpp"
 
 namespace ldm::messaging {
 
 class ZenohTransport : public Transport {
 public:
-    explicit ZenohTransport(const config::MessagingConfig& cfg);
+    explicit ZenohTransport(const MessagingConfig& cfg);
 
     void publish(const std::string& topic, const std::string& payload) override;
     int subscribe(const std::string& topic, MessageHandler handler) override;
@@ -26,7 +25,7 @@ public:
 private:
     void dispatch(const std::string& topic, const std::string& payload);
 
-    config::MessagingConfig cfg_;
+    MessagingConfig cfg_;
     std::unique_ptr<zenoh::Session> session_;
     std::mutex mutex_;
     int next_id_{1};

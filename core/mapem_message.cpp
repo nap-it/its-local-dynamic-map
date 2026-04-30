@@ -1,23 +1,13 @@
-#include <atomic>
-#include <chrono>
-#include <iomanip>
-#include <mutex>
+#include "mapem_message.hpp"
+
+#include <algorithm>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
-#include <spdlog/spdlog.h>
-#include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
-
-#include "../../common/config/config.hpp"
-#include "../../common/ldm-model/ldm_store.hpp"
-#include "../../common/locator/locator.hpp"
-#include "../../common/messaging/transport.hpp"
-#include "../../common/metrics/metrics.hpp"
 
 namespace rj = rapidjson;
 
@@ -32,108 +22,33 @@ std::string trim(const std::string& s) {
     return s.substr(start, end - start + 1);
 }
 
-bool isJsonObject(const std::string& s) {
-    const auto trimmed = trim(s);
-    return !trimmed.empty() && trimmed.front() == '{' && trimmed.back() == '}';
+std::string toJsonString(const rj::Value& value) {
+    rj::StringBuffer buffer;
+    rj::Writer<rj::StringBuffer> writer(buffer);
+    value.Accept(writer);
+    return buffer.GetString();
 }
 
-std::string jsonEscape(const std::string& input) {
-    std::ostringstream out;
-    for (unsigned char c : input) {
-        switch (c) {
-            case '\\':
-                out << "\\\\";
-                break;
-            case '"':
-                out << "\\\"";
-                break;
-            case '\n':
-                out << "\\n";
-                break;
-            case '\r':
-                out << "\\r";
-                break;
-            case '\t':
-                out << "\\t";
-                break;
-            default:
-                if (c < 0x20) {
-                    out << "\\u00" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c) << std::dec;
-                } else {
-                    out << static_cast<char>(c);
-                }
-                break;
+const rj::Value* findMapemObject(const rj::Value& root) {
+    if (!root.IsObject()) {
+        return nullptr;
+    }
+    if (root.HasMember("intersections") && root["intersections"].IsArray()) {
+        return &root;
+    }
+    if (root.HasMember("map") && root["map"].IsObject()) {
+        return &root["map"];
+    }
+    if (root.HasMember("fields") && root["fields"].IsObject()) {
+        const auto& fields = root["fields"];
+        if (fields.HasMember("map") && fields["map"].IsObject()) {
+            return &fields["map"];
         }
     }
-    return out.str();
+    return nullptr;
 }
 
-std::string extractMapemJson(const std::string& payload) {
-    const auto trimmed = trim(payload);
-    if (trimmed.empty()) {
-        return {};
-    }
-    const auto first_brace = trimmed.find('{');
-    const auto last_brace = trimmed.rfind('}');
-    if (first_brace == std::string::npos || last_brace == std::string::npos || last_brace <= first_brace) {
-        return {};
-    }
-    return trim(trimmed.substr(first_brace, last_brace - first_brace + 1));
-}
-
-struct MapemFilter {
-    bool include_vehicle_lane = true;
-    bool include_sidewalk = true;
-    bool include_waiting_sidewalk = false;
-    bool include_crosswalk = true;
-    bool include_bike_lane = true;
-    bool include_parking = true;
-    bool include_median = true;
-    bool include_unknown_lane = true;
-    bool include_connections = true;
-    bool include_maneuver = true;
-    bool include_shared_with = true;
-    bool include_signal_groups = true;
-    bool include_speed_limits = true;
-    bool include_overlays = true;
-    bool include_directional_use = true;
-};
-
-void applyBool(const rj::Value& obj, const char* key, bool& target) {
-    if (obj.HasMember(key) && obj[key].IsBool()) {
-        target = obj[key].GetBool();
-    }
-}
-
-MapemFilter parseMapemFilter(const rj::Value& root) {
-    MapemFilter filter;
-    const rj::Value* filter_obj = nullptr;
-    if (root.HasMember("mapem_filter") && root["mapem_filter"].IsObject()) {
-        filter_obj = &root["mapem_filter"];
-    }
-    const rj::Value& source = filter_obj ? *filter_obj : root;
-    applyBool(source, "vehicleLane", filter.include_vehicle_lane);
-    applyBool(source, "vehicle", filter.include_vehicle_lane);
-    applyBool(source, "sidewalk", filter.include_sidewalk);
-    applyBool(source, "waitingSidewalk", filter.include_waiting_sidewalk);
-    applyBool(source, "crosswalk", filter.include_crosswalk);
-    applyBool(source, "bikeLane", filter.include_bike_lane);
-    applyBool(source, "parking", filter.include_parking);
-    applyBool(source, "median", filter.include_median);
-    applyBool(source, "unknownLane", filter.include_unknown_lane);
-    applyBool(source, "connections", filter.include_connections);
-    applyBool(source, "maneuverConnection", filter.include_maneuver);
-    applyBool(source, "maneuver", filter.include_maneuver);
-    applyBool(source, "sharedWith", filter.include_shared_with);
-    applyBool(source, "signalGroups", filter.include_signal_groups);
-    applyBool(source, "signalGroup", filter.include_signal_groups);
-    applyBool(source, "speedLimits", filter.include_speed_limits);
-    applyBool(source, "overlays", filter.include_overlays);
-    applyBool(source, "directionalUse", filter.include_directional_use);
-    return filter;
-}
-
-bool isFullMapemRequest(const MapemFilter& filter) {
+bool isFullMapemRequest(const ldm::mapem::Filter& filter) {
     return filter.include_vehicle_lane &&
            filter.include_sidewalk &&
            filter.include_waiting_sidewalk &&
@@ -176,7 +91,7 @@ std::string laneTypeFromLane(const rj::Value& lane) {
     return "unknown";
 }
 
-bool allowLaneType(const std::string& lane_type, const MapemFilter& filter) {
+bool allowLaneType(const std::string& lane_type, const ldm::mapem::Filter& filter) {
     if (lane_type == "vehicle") return filter.include_vehicle_lane;
     if (lane_type == "sidewalk") return filter.include_sidewalk;
     if (lane_type == "waitingSidewalk") return filter.include_waiting_sidewalk;
@@ -201,14 +116,81 @@ void removeRevisions(rj::Value& mapem) {
     }
 }
 
-std::string toJsonString(const rj::Value& value) {
-    rj::StringBuffer buffer;
-    rj::Writer<rj::StringBuffer> writer(buffer);
-    value.Accept(writer);
-    return buffer.GetString();
+void applyBool(const rj::Value& obj, const char* key, bool& target) {
+    if (obj.HasMember(key) && obj[key].IsBool()) {
+        target = obj[key].GetBool();
+    }
 }
 
-bool buildFilteredMapem(const std::string& mapem_json, const MapemFilter& filter, std::string& out_json) {
+}  // namespace
+
+namespace ldm::mapem {
+
+Filter ParseFilter(const rj::Value& root) {
+    Filter filter;
+    const rj::Value* filter_obj = nullptr;
+    if (root.HasMember("mapem_detail") && root["mapem_detail"].IsObject()) {
+        filter_obj = &root["mapem_detail"];
+    } else if (root.HasMember("mapem_filter") && root["mapem_filter"].IsObject()) {
+        filter_obj = &root["mapem_filter"];
+    }
+    const rj::Value& source = filter_obj ? *filter_obj : root;
+    applyBool(source, "vehicleLane", filter.include_vehicle_lane);
+    applyBool(source, "vehicle", filter.include_vehicle_lane);
+    applyBool(source, "sidewalk", filter.include_sidewalk);
+    applyBool(source, "waitingSidewalk", filter.include_waiting_sidewalk);
+    applyBool(source, "crosswalk", filter.include_crosswalk);
+    applyBool(source, "bikeLane", filter.include_bike_lane);
+    applyBool(source, "parking", filter.include_parking);
+    applyBool(source, "median", filter.include_median);
+    applyBool(source, "unknownLane", filter.include_unknown_lane);
+    applyBool(source, "connections", filter.include_connections);
+    applyBool(source, "maneuverConnection", filter.include_maneuver);
+    applyBool(source, "maneuver", filter.include_maneuver);
+    applyBool(source, "sharedWith", filter.include_shared_with);
+    applyBool(source, "signalGroups", filter.include_signal_groups);
+    applyBool(source, "signalGroup", filter.include_signal_groups);
+    applyBool(source, "speedLimits", filter.include_speed_limits);
+    applyBool(source, "overlays", filter.include_overlays);
+    applyBool(source, "directionalUse", filter.include_directional_use);
+    return filter;
+}
+
+bool ExtractNormalizedMapem(const std::string& payload, std::string& out_json) {
+    out_json.clear();
+    const auto trimmed = trim(payload);
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    std::string json_payload;
+    if (!trimmed.empty() && trimmed.front() == '{' && trimmed.back() == '}') {
+        json_payload = trimmed;
+    } else {
+        const auto first_brace = trimmed.find('{');
+        const auto last_brace = trimmed.rfind('}');
+        if (first_brace == std::string::npos || last_brace == std::string::npos || last_brace <= first_brace) {
+            return false;
+        }
+        json_payload = trim(trimmed.substr(first_brace, last_brace - first_brace + 1));
+    }
+
+    rj::Document doc;
+    doc.Parse(json_payload.c_str());
+    if (doc.HasParseError() || !doc.IsObject()) {
+        return false;
+    }
+
+    const rj::Value* mapem = findMapemObject(doc);
+    if (!mapem || !mapem->IsObject()) {
+        return false;
+    }
+
+    out_json = toJsonString(*mapem);
+    return !out_json.empty();
+}
+
+bool BuildFilteredMapem(const std::string& mapem_json, const Filter& filter, std::string& out_json) {
     if (mapem_json.empty()) {
         return false;
     }
@@ -383,110 +365,4 @@ bool buildFilteredMapem(const std::string& mapem_json, const MapemFilter& filter
     return true;
 }
 
-}  // namespace
-
-int main() {
-    using namespace std::chrono_literals;
-    auto cfg = ldm::config::loadConfig("/config.ini");
-
-    spdlog::set_level(cfg.general.debug ? spdlog::level::debug : spdlog::level::info);
-    spdlog::info("[LDM-Core] Starting LDM core service");
-
-    ldm::locator::Locator locator(cfg.locator);
-    locator.run();
-    auto [lat, lon] = locator.currentPosition();
-
-    ldm::model::LdmStore store(cfg.ldm_core.aom_radius_m);
-    store.setStationReference(lat, lon);
-
-    std::unique_ptr<ldm::metrics::Metrics> metrics;
-    ldm::metrics::Gauge* objects_gauge = nullptr;
-    ldm::metrics::Counter* served_queries = nullptr;
-    if (cfg.general.prometheus) {
-        metrics = std::make_unique<ldm::metrics::Metrics>(cfg.general.prometheus_port);
-        objects_gauge = &metrics->gauge("ldm_objects_total", "Current number of objects in the LDM");
-        served_queries = &metrics->counter("ldm_core_queries_total", "Total queries served by LDM core");
-    }
-
-    auto transport = ldm::messaging::createTransport(cfg.messaging);
-    auto* transport_ptr = transport.get();
-    std::atomic<size_t> object_counter{0};
-    std::mutex mapem_mutex;
-    std::string last_mapem_json;
-    auto last_mapem_ts = std::chrono::system_clock::time_point{};
-    const auto ingest_topic = cfg.ldm_core.ingest_topic.empty() ? std::string("ldm/updates") : cfg.ldm_core.ingest_topic;
-    const auto query_topic = cfg.ldm_core.query_topic.empty() ? std::string("ldm/query") : cfg.ldm_core.query_topic;
-    const auto response_topic = cfg.ldm_core.response_topic.empty() ? std::string("ldm/response") : cfg.ldm_core.response_topic;
-
-    transport->subscribe(ingest_topic, [&, objects_gauge](const std::string& topic, const std::string& payload) {
-        auto count = object_counter.fetch_add(1) + 1;
-        if (objects_gauge) {
-            objects_gauge->Set(static_cast<double>(count));
-        }
-        const auto mapem_json = extractMapemJson(payload);
-        if (!mapem_json.empty()) {
-            std::lock_guard<std::mutex> lock(mapem_mutex);
-            last_mapem_json = mapem_json;
-            last_mapem_ts = std::chrono::system_clock::now();
-            spdlog::debug("[LDM-Core] Stored MAPEM update ({} bytes)", last_mapem_json.size());
-        }
-        spdlog::debug("[LDM-Core] Received update on {} payload={} (total={})", topic, payload, count);
-    });
-
-    transport->subscribe(query_topic, [&, transport_ptr, response_topic, served_queries](const std::string& topic,
-                                                                                       const std::string& payload) {
-        if (served_queries) {
-            served_queries->Increment();
-        }
-        std::string mapem_snapshot;
-        double mapem_age_s = -1.0;
-        {
-            std::lock_guard<std::mutex> lock(mapem_mutex);
-            mapem_snapshot = last_mapem_json;
-            if (!mapem_snapshot.empty() && last_mapem_ts.time_since_epoch().count() > 0) {
-                mapem_age_s = std::chrono::duration<double>(std::chrono::system_clock::now() - last_mapem_ts).count();
-            }
-        }
-
-        const bool has_mapem = !mapem_snapshot.empty();
-        MapemFilter filter;
-        if (isJsonObject(payload)) {
-            rj::Document request_doc;
-            request_doc.Parse(payload.c_str());
-            if (!request_doc.HasParseError() && request_doc.IsObject()) {
-                filter = parseMapemFilter(request_doc);
-            }
-        }
-        std::string mapem_payload;
-        if (has_mapem) {
-            if (!buildFilteredMapem(mapem_snapshot, filter, mapem_payload)) {
-                mapem_payload = mapem_snapshot;
-            }
-        }
-        std::ostringstream response;
-        response << "{\"has_mapem\":" << (has_mapem ? "true" : "false");
-        if (has_mapem) {
-            response << ",\"mapem\":" << mapem_payload;
-        }
-        if (!payload.empty()) {
-            if (isJsonObject(payload)) {
-                response << ",\"request\":" << trim(payload);
-            } else {
-                response << ",\"request\":\"" << jsonEscape(payload) << "\"";
-            }
-        }
-        if (mapem_age_s >= 0.0) {
-            response << ",\"mapem_age_s\":" << mapem_age_s;
-        }
-        response << "}";
-
-        spdlog::debug("[LDM-Core] Responding to query payload={} via {}", payload, topic);
-        transport_ptr->publish(response_topic, response.str());
-    });
-
-    while (true) {
-        store.runMaintenance();
-        std::this_thread::sleep_for(5s);
-    }
-    return 0;
-}
+}  // namespace ldm::mapem

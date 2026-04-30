@@ -6,7 +6,7 @@
 
 namespace ldm::messaging {
 
-FastDdsTransport::FastDdsTransport(const config::MessagingConfig& cfg) : cfg_(cfg) {
+FastDdsTransport::FastDdsTransport(const MessagingConfig& cfg) : cfg_(cfg) {
     dds_ = std::make_unique<Dds>("LDM-Transport", cfg_.domain_id, [this](const std::string& topic, const std::string& message) {
         this->dispatch(topic, message);
     });

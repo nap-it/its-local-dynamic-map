@@ -8,7 +8,7 @@
 
 namespace ldm::messaging {
 
-MqttTransport::MqttTransport(const config::MessagingConfig& cfg) : cfg_(cfg) {
+MqttTransport::MqttTransport(const MessagingConfig& cfg) : cfg_(cfg) {
     data_mqtt_server mqtt_cfg;
     mqtt_cfg.address = "tcp://" + cfg_.mqtt_host + ":" + std::to_string(cfg_.mqtt_port);
     mqtt_cfg.client_id = "LDM-MQTT-" + std::to_string(std::chrono::system_clock::now().time_since_epoch().count());

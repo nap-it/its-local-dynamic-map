@@ -1,102 +1,130 @@
-# ldm service
+# Local Dynamic Map
 
-A Local Dynamic Map (LDM) implementation tailored for CPS V2 Clustering deployments. This service set follows ETSI EN 302 895 / TR 102 863 semantics and reuses the middleware and configuration patterns from the CPS project.
+## Architecture
+
+![Local Dynamic Map](LDM.png)[drawio](https://drive.google.com/file/d/1npu8NSyhw1E7h3KSJc8ghUrJZ_tloSjh/view?usp=sharing)
+
+A Local Dynamic Map (LDM) stack for CPS V2 clustering deployments. The service set follows ETSI EN 302 895 / TR 102 863 semantics and reuses CPS-style middleware/config patterns.
 
 ## Repository layout
 
-- `ldm-core/` – In-memory ldm store, AoM maintenance, metrics exposer.
-- `ldm-ingestion/` – MAPEM and future message ingestion into the ldm.
-- `ldm-query/` – Query and subscription front-end for applications.
-- `common/` – Shared utilities (locator, geometry, metrics, config, LDM model).
-- `agent/` – Compose templates for deployment.
-- `metrics/` – Prometheus configuration and examples.
+- `core/` - authoritative in-memory LDM core, unified MAPEM/VAM/CPM store, locator, query handling, metrics.
+- `ingestion/` - MAPEM/VAM adapter-forwarder (`static | mqtt | dds`) into core ingest topic.
+- `common/` - shared transport layer (Fast DDS, MQTT, Zenoh) and utilities.
+- `agent/` - deployment templates.
+- `metrics/` - Prometheus examples.
 
-## Architecture at a glance
+`ldm-core` is the only owner of persistent state and update events.
 
-```
-          (MAPEM source / simulator)
-                     |
-                     v
-             ldm-ingestion
-                 |
-          publishes `ldm/updates`
-                 |
-             ldm-core  <----->  ldm-query
-                 ^                |
-                 |                |
-        answers `ldm/response`    |
-        to queries on             |
-        `ldm/query` --------------+
-                 |
-                 |  (MQTT / DDS / Zenoh transport)
-                 v
-        External LDM client (e.g., CPS-v2 generation service)
-        - sends queries to `ldm/query`
-        - listens on `ldm/response`
-        - subscribes to `ldm/updates` for change notifications
-```
+## Topic contract
 
-The external LDM client sits outside the LDM stack and mirrors the CPS sensor-adapter style: it issues an initial query, subscribes for update notifications, and only re-queries when needed. Internally, `ldm-core` remains the authoritative store; `ldm-ingestion` feeds it, and `ldm-query` is a thin frontend for app-level access.
+- `ldm/ingest`
+  - producer: `ldm-ingestion`
+  - consumer: `ldm-core`
+  - payload: raw MAPEM/VAM payloads forwarded from providers (not final change events)
+- `ldm/response`
+  - producer: `ldm-core`
+  - consumer: external clients / `ldm-query`
+- `ldm/updates`
+  - producer: `ldm-core` only
+  - consumer: external clients
+  - payload: normalized state-change events (event-only semantics)
 
-## Build
+### `ldm/updates` normalized payload
 
-```bash
-cmake -S . -B build
-cmake --build build
+```json
+{
+  "domain": "mapem",
+  "event": "state_changed",
+  "timestamp": 1710000000.123,
+  "stats": {
+    "station_count": 0,
+    "object_count": 12,
+    "sensor_count": 0,
+    "perception_region_count": 0
+  }
+}
 ```
 
-Each service has an individual target (`ldm-core`, `ldm-ingestion`, `ldm-query`).
+`domain` values: `mapem`, `vam`, `cpm`.
 
-### Container builds (mirrors cps-v2 images)
+## Unified core store
 
-The Dockerfiles now follow the same multi-stage layout seen in `cps-v2` (middleware-lib stages + runtime). Building a single service image locally:
+`core/ldm_store` is a single physical store that contains all runtime domains:
 
-```bash
-docker build -t ldm-core:local -f ldm-core/Dockerfile .
-```
+- MAPEM/VAM objects with AoM upsert filtering and validity/maintenance expiration.
+- CPM station-scoped state with scope, cadence, SIC, perception regions, object ids, and sweeper-based TTL handling.
 
-The compose file references registry images under `code.nap.av.it.pt:5050/mobility-networks/ldm/*` just like `cps-v2`, but `docker compose build` will override them during development.
+There is no separate runtime `CpmStateStore` module.
 
-## Run with Docker Compose
+## AOI vs AoM
 
-```bash
-docker compose up --build
-```
+- AoM: core-owned boundary (configured in `ldm-core.aom_radius_m` + locator station reference), enforced on ingest/maintenance.
+- AOI: query-time region from client request payload (`ldm/query`) used to filter response results.
 
 ## Configuration
 
-Each service loads `/config.ini`. Example files live next to each executable and follow the same structure adopted by CPS-V2: `[general]`, `[messaging]`, `[locator]` and a service-specific block such as `[ldm-core]`, `[ingestion]` or `[query]`.
+Each service reads `/config.ini`.
 
-### Locator (CPS-V2 parity)
+- `core/config.ini`
+  - `[locator]`: station reference source (`static | mqtt | dds`)
+  - `[ldm-core]`: AoM radius, validity/TTL values, topic names
+- `ingestion/config.ini`
+  - `[mapem]`, `[vam]`: provider, input topics, simulation options, `output_topics`
+- `query/config.ini`
+  - query defaults (`request_topic`, `response_topic`, AOI center, query type)
 
-The locator now mirrors the CPS-V2 implementation: it supports `location_provider = static | mqtt | dds`, subscribes to VANETZA CAM/CAM_FULL/VAM feeds (`vanetza/in/cam`, `vanetza/in/cam_full`, `vanetza/in/vam`, `vanetza/own/cam`) over MQTT or DDS, and keeps the latest latitude/longitude/heading in the shared `common/locator` module. The existing `station_latitude`/`station_longitude` fields seed the position for `static` deployments. Each service has its own `[locator]` block so it can run independently or share the same coordinates by mounting a common config.
+Default topic split:
 
-### Messaging backends (Fast DDS, MQTT, Zenoh)
+- ingestion MAPEM/VAM output: `ldm/ingest`
+- core updates output: `ldm/updates`
 
-Configuration has been aligned with the CPS-V2 stack so that every service shares a common `messaging` section:
+## Locator behavior
+
+The locator runs inside core and mirrors CPS behavior:
+
+- `location_provider = static | mqtt | dds`
+- supports VANETZA CAM/CAM_FULL/VAM-style feeds for dynamic station reference
+- `locator_update_interval_ms` controls refresh cadence for dynamic providers
+
+## Query/response protocol
+
+Query and response wire formats remain backward compatible.
+
+Supported query types:
+
+- `mapem`
+- `vam`
+- `cpm_state`
+- `cpm_objects`
+- `cpm_perception_regions`
+
+Legacy aliases retained in parser routing:
+
+- `cpm` -> `cpm_state`
+- `cpm_sensors` -> `cpm_state`
+- `cpm_regions` -> `cpm_perception_regions`
+
+CPM filters:
+
+- `include_own`, `include_external`
+- `max_object_age_ms`, `max_sic_age_s`, `max_perception_region_age_s`
+- `station_ids`, `limit_objects`, `limit_sensors`, `limit_regions`
+
+## Ingestion simulation
+
+MAPEM and VAM can be simulated from file in `ldm-ingestion`:
 
 ```ini
-[messaging]
-backend = fastdds    ; fastdds | mqtt | zenoh
-domain_id = 0        ; DDS domain id (used when backend = fastdds)
-mqtt_host = 127.0.0.1
-mqtt_port = 1883
-zenoh_endpoint = tcp/127.0.0.1:7447
-```
-
-The new `common/messaging` subsystem exposes a transport interface that emulates Fast DDS, MQTT or Zenoh semantics (mirroring CPS-V2) so that ingestion, core and query components can publish/subscribe on shared topics (`generation/mapem`, `ldm/updates`, `ldm/query`, `ldm/response`). Swapping the backend only requires editing the config files, matching the approach taken in the CPS-V2 generation/processing services.
-
-The ingestion service now republishes incoming MAPEM traffic on the configured LDM topic, the core tracks updates and responds to queries, and the query service continuously exercises the Fast DDS/MQTT/Zenoh interface by issuing sample requests. This mirrors the CPS-V2 workflow while keeping the implementation self-contained.
-
-### MAPEM simulation from file
-
-`ldm-ingestion` can publish a static MAPEM JSON on a timer. Set the path in `ldm-ingestion/config.ini`:
-
-```ini
-[ingestion]
-simulate_input = true
+[mapem]
+mapem_provider = static
 simulation_interval_ms = 2000
-mapem_file = /maps/it2.json
+file_path = /maps/it2.json
 ```
 
-The compose file mounts `./maps` into the container, so you can drop MAPEM files there and reference them via `/maps/<name>.json`.
+```ini
+[vam]
+vam_provider = static
+simulation_interval_ms = 1000
+file_path = /maps/vam_sample.json
+```

@@ -10,13 +10,12 @@
 #include "mqttwrapper.h"
 
 #include "transport.hpp"
-#include "../config/config.hpp"
 
 namespace ldm::messaging {
 
 class MqttTransport : public Transport {
 public:
-    explicit MqttTransport(const config::MessagingConfig& cfg);
+    explicit MqttTransport(const MessagingConfig& cfg);
 
     void publish(const std::string& topic, const std::string& payload) override;
     int subscribe(const std::string& topic, MessageHandler handler) override;
@@ -27,7 +26,7 @@ private:
     void ensureConnected();
     void dispatch(const std::string& topic, const std::string& payload);
 
-    config::MessagingConfig cfg_;
+    MessagingConfig cfg_;
     std::unique_ptr<MqttWrapper> client_;
     std::mutex mutex_;
     int next_id_{1};
