@@ -106,6 +106,7 @@ build_query_arm64:
   stage: manifest
   image: code.nap.av.it.pt:5050/external-tools/misc-docker-images/docker
   script:
+    - apk add --no-cache jq
     - echo "→ Logging in for manifest"
     - echo "$CI_TOKEN" | docker login -u "$CI_USER" --password-stdin code.nap.av.it.pt:5050
     - |
@@ -114,13 +115,14 @@ build_query_arm64:
         echo "→ Checking if ${DOCKERFILE_PATH} changed since last tag…"
         git fetch --unshallow || true
         git fetch --tags
+
         # Check if there are any tags at all
         if git tag -l | grep -q .; then
           # Tags exist, try to find previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [[ -n "$PREV_TAG" ]]; then
             echo "→ Previous tag is $PREV_TAG"
-            CHANGED=$(git diff --name-only "$PREV_TAG" "$CI_COMMIT_TAG" -- "$DOCKERFILE_PATH" common CMakeLists.txt)
+            CHANGED=$(git diff --name-only "$PREV_TAG" "$CI_COMMIT_TAG" -- "$DOCKERFILE_PATH")
             if [[ -z "$CHANGED" ]]; then
               echo "→ No changes in $DOCKERFILE_PATH since $PREV_TAG; skipping manifest."
               exit 0
@@ -132,27 +134,41 @@ build_query_arm64:
           echo "→ No tags exist in repository, creating manifest anyway."
         fi
       fi
+
     - |
+      IMAGE="code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}"
+
+      resolve_arch_ref() {
+        local tag="$1"
+        local arch="$2"
+
+        docker manifest inspect "${IMAGE}:${tag}" | jq -r \
+          --arg img "$IMAGE" \
+          --arg tag "$tag" \
+          --arg arch "$arch" \
+          'if has("manifests") then
+             "\($img)@\(.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest)"
+           else
+             "\($img):\($tag)"
+           end'
+      }
+
+      AMD64_REF=$(resolve_arch_ref "${DOCKER_TAG}-amd64" amd64)
+      ARM64_REF=$(resolve_arch_ref "${DOCKER_TAG}-arm64" arm64)
+
       echo "→ Creating multi-arch manifest ${IMAGE_NAME}:${DOCKER_TAG}"
-      docker manifest create code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG} \
-        code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG}-amd64 \
-        code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG}-arm64
-      docker manifest annotate code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG} \
-        code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG}-amd64 --arch amd64
-      docker manifest annotate code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG} \
-        code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG}-arm64 --arch arm64
-      docker manifest push code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG}
+      docker manifest create "${IMAGE}:${DOCKER_TAG}" "$AMD64_REF" "$ARM64_REF"
+      docker manifest annotate "${IMAGE}:${DOCKER_TAG}" "$AMD64_REF" --arch amd64
+      docker manifest annotate "${IMAGE}:${DOCKER_TAG}" "$ARM64_REF" --arch arm64
+      docker manifest push "${IMAGE}:${DOCKER_TAG}"
+
       # Only on tag pipelines, also bump :latest
       if [[ -n "$CI_COMMIT_TAG" && "$CI_COMMIT_TAG" != "latest" ]]; then
         echo "→ Also updating multi-arch manifest ${IMAGE_NAME}:latest"
-        docker manifest create code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:latest \
-          code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG}-amd64 \
-          code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG}-arm64
-        docker manifest annotate code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:latest \
-          code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG}-amd64 --arch amd64
-        docker manifest annotate code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:latest \
-          code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:${DOCKER_TAG}-arm64 --arch arm64
-        docker manifest push code.nap.av.it.pt:5050/mobility-networks/ldm/${IMAGE_NAME}:latest
+        docker manifest create "${IMAGE}:latest" "$AMD64_REF" "$ARM64_REF"
+        docker manifest annotate "${IMAGE}:latest" "$AMD64_REF" --arch amd64
+        docker manifest annotate "${IMAGE}:latest" "$ARM64_REF" --arch arm64
+        docker manifest push "${IMAGE}:latest"
       fi
   rules:
     # Tag pipelines only
