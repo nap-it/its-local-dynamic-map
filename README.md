@@ -10,7 +10,6 @@ A Local Dynamic Map (LDM) stack for CPS V2 clustering deployments. The service s
 
 - `core/` - authoritative in-memory LDM core, unified MAPEM/VAM/CPM store, locator, query handling, metrics.
 - `ingestion/` - MAPEM/VAM adapter-forwarder (`static | mqtt | dds`) into core ingest topic.
-- `query/` - sample query frontend for publishing `ldm/query` and consuming `ldm/response`.
 - `common/` - shared transport layer (Fast DDS, MQTT, Zenoh) and utilities.
 - `agent/` - deployment templates.
 - `metrics/` - Prometheus examples.
